@@ -528,24 +528,104 @@ html, body {
 
 /* Books List View */
 .view-mode-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 10px !important;
 }
 
 .view-mode-list .book-card {
-  flex-direction: row;
-  height: 84px;
+  flex-direction: row !important;
+  height: 94px !important;
+  min-height: 94px !important;
+  max-height: 94px !important;
+  width: 100% !important;
+  background: var(--surface-1) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+  align-items: center !important;
+  box-shadow: var(--shadow-sm) !important;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease !important;
+}
+
+.view-mode-list .book-card:hover {
+  transform: translateX(4px) !important;
+  border-color: var(--accent) !important;
+  background: var(--surface-2) !important;
+  box-shadow: var(--shadow-md) !important;
 }
 
 .view-mode-list .book-cover-wrapper {
-  width: 56px;
-  height: 84px;
-  flex-shrink: 0;
+  width: 63px !important;
+  height: 94px !important;
+  min-width: 63px !important;
+  max-width: 63px !important;
+  flex-shrink: 0 !important;
+  aspect-ratio: auto !important;
+  position: relative !important;
+  border-radius: 0 !important;
+  border-right: 1px solid var(--border) !important;
+}
+
+.view-mode-list .book-cover-img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  transform: none !important;
 }
 
 .view-mode-list .book-info {
-  justify-content: center;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  flex: 1 !important;
+  min-width: 0 !important;
+  padding: 10px 16px !important;
+  overflow: hidden !important;
+}
+
+.view-mode-list .book-title {
+  font-size: 1rem !important;
+  font-weight: 700 !important;
+  color: var(--text) !important;
+  margin-bottom: 4px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.view-mode-list .book-author {
+  font-size: 0.84rem !important;
+  color: var(--text-muted) !important;
+  margin-bottom: 4px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.view-mode-list .book-rating {
+  font-size: 0.8rem !important;
+  margin-top: 0 !important;
+}
+
+.view-mode-list .book-badge-series {
+  display: none !important;
+}
+
+.view-mode-list .book-badge-formats {
+  position: static !important;
+  margin-left: auto !important;
+  margin-right: 16px !important;
+  background: var(--surface-2) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--accent-text) !important;
+  font-size: 0.75rem !important;
+  font-weight: 700 !important;
+  padding: 4px 10px !important;
+  border-radius: var(--radius-sm) !important;
+  flex-shrink: 0 !important;
 }
 
 /* Rows (Authors, Series, Tags, Shelves) */

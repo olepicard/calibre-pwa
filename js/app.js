@@ -238,12 +238,27 @@ const CalibreApp = (function () {
     // Sort selector
     document.getElementById('sort-select').addEventListener('change', (e) => {
       state.sortBy = e.target.value;
-      loadBooks(true);
+      if (state.currentTab !== 'books') {
+        switchTab('books');
+      } else {
+        loadBooks(true);
+      }
     });
 
-    // View mode toggle
-    document.getElementById('btn-view-grid').addEventListener('click', () => setViewMode('grid'));
-    document.getElementById('btn-view-list').addEventListener('click', () => setViewMode('list'));
+    // View mode toggle (Grid / List)
+    document.getElementById('btn-view-grid').addEventListener('click', () => {
+      setViewMode('grid');
+      if (state.currentTab !== 'books') {
+        switchTab('books');
+      }
+    });
+
+    document.getElementById('btn-view-list').addEventListener('click', () => {
+      setViewMode('list');
+      if (state.currentTab !== 'books') {
+        switchTab('books');
+      }
+    });
 
     // Theme toggle
     document.getElementById('btn-theme-toggle').addEventListener('click', cycleTheme);
@@ -340,6 +355,12 @@ const CalibreApp = (function () {
     });
 
     window.scrollTo({ top: 0, behavior: 'instant' });
+
+    // Hide controls bar on tabs where it does not apply (Settings, Authors, Series, Shelves)
+    const controlsBar = document.querySelector('.controls-bar');
+    if (controlsBar) {
+      controlsBar.hidden = (tabName === 'settings' || tabName === 'authors' || tabName === 'series' || tabName === 'shelves');
+    }
 
     if (tabName === 'home') {
       loadMagicShelves();
@@ -916,6 +937,7 @@ const CalibreApp = (function () {
     document.getElementById('shelf-detail-title').textContent = `${shelf.icon || '📚'} ${shelf.name}`;
     document.getElementById('shelf-detail-desc').textContent = shelf.description || '';
     const booksContainer = document.getElementById('shelf-books-container');
+    booksContainer.className = state.viewMode === 'list' ? 'view-mode-list' : 'view-mode-grid';
     booksContainer.innerHTML = '';
 
     if (!books.length) {
@@ -990,6 +1012,7 @@ const CalibreApp = (function () {
     document.getElementById('author-detail-name').textContent = details.name;
     document.getElementById('author-detail-count').textContent = `${details.totalBooks} livre${details.totalBooks > 1 ? 's' : ''}`;
     const container = document.getElementById('author-books-container');
+    container.className = state.viewMode === 'list' ? 'view-mode-list' : 'view-mode-grid';
     container.innerHTML = '';
 
     for (const book of details.books) {
@@ -1034,6 +1057,7 @@ const CalibreApp = (function () {
     document.getElementById('series-detail-name').textContent = details.name;
     document.getElementById('series-detail-count').textContent = `${details.totalBooks} tomes`;
     const container = document.getElementById('series-books-container');
+    container.className = state.viewMode === 'list' ? 'view-mode-list' : 'view-mode-grid';
     container.innerHTML = '';
 
     for (const book of details.books) {
@@ -1104,12 +1128,16 @@ const CalibreApp = (function () {
 
   function setViewMode(mode, save = true) {
     state.viewMode = mode;
-    const container = document.getElementById('books-container');
-    container.classList.toggle('view-mode-grid', mode === 'grid');
-    container.classList.toggle('view-mode-list', mode === 'list');
+    const containers = document.querySelectorAll('#books-container, #shelf-books-container, #author-books-container, #series-books-container');
+    containers.forEach((c) => {
+      c.classList.toggle('view-mode-grid', mode === 'grid');
+      c.classList.toggle('view-mode-list', mode === 'list');
+    });
 
-    document.getElementById('btn-view-grid').classList.toggle('active', mode === 'grid');
-    document.getElementById('btn-view-list').classList.toggle('active', mode === 'list');
+    const btnGrid = document.getElementById('btn-view-grid');
+    const btnList = document.getElementById('btn-view-list');
+    if (btnGrid) btnGrid.classList.toggle('active', mode === 'grid');
+    if (btnList) btnList.classList.toggle('active', mode === 'list');
 
     if (save) CalibreStorage.setSetting('view_mode', mode);
   }
