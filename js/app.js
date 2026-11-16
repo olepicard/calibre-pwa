@@ -44,6 +44,126 @@ const CalibreApp = (function () {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function copyToClipboard(text) {
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('✓ Copié dans le presse-papier !', 'info');
+      }).catch(() => {
+        window.prompt('Copier le texte ci-dessous :', text);
+      });
+    } else {
+      window.prompt('Copier le texte ci-dessous :', text);
+    }
+  }
+
+  function renderMissingFileCard(details) {
+    const dataFiles = (details && details.dataFiles) || [];
+    const basePath = (details && details.path) || '';
+
+    if (dataFiles.length > 0) {
+      const filesHtml = dataFiles.map((d) => {
+        const ext = (d.format || 'epub').toLowerCase();
+        const baseName = d.name || details.title || 'livre';
+        const fileName = `${baseName}.${ext}`;
+        const relPath = basePath ? `${basePath}/${fileName}` : fileName;
+        const sizeStr = d.size ? formatBytes(d.size) : 'Inconnue';
+        const safeFileName = escapeHtml(fileName);
+        const safeRelPath = escapeHtml(relPath);
+        const jsFileName = fileName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const jsRelPath = relPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+        return `
+          <div class="status-missing-file-box">
+            <div class="status-missing-row">
+              <span class="status-missing-badge">${escapeHtml(d.format || ext.toUpperCase())}</span>
+              <span class="status-missing-meta">Taille Calibre : <strong>${sizeStr}</strong></span>
+            </div>
+            <div class="status-missing-field">
+              <span class="status-missing-label">Nom exact du fichier recherché :</span>
+              <div class="status-code-container">
+                <code class="status-code-text" title="Cliquer pour copier" onclick="CalibreApp.copyToClipboard('${jsFileName}')">${safeFileName}</code>
+                <button type="button" class="btn-copy-code" title="Copier le nom du fichier" onclick="CalibreApp.copyToClipboard('${jsFileName}')">📋 Copier</button>
+              </div>
+            </div>
+            <div class="status-missing-field">
+              <span class="status-missing-label">Chemin relatif attendu :</span>
+              <div class="status-code-container">
+                <code class="status-code-text status-code-path" title="Cliquer pour copier" onclick="CalibreApp.copyToClipboard('${jsRelPath}')">${safeRelPath}</code>
+                <button type="button" class="btn-copy-code" title="Copier le chemin relatif" onclick="CalibreApp.copyToClipboard('${jsRelPath}')">📋 Copier</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="file-status-missing-card">
+          <div class="status-missing-header">
+            <span class="status-missing-icon">⚠️</span>
+            <div>
+              <div class="status-missing-title">Fichier non trouvé dans le dossier local défini</div>
+              <div class="status-missing-subtitle">Le fichier n'a pas été trouvé à l'emplacement standard Calibre :</div>
+            </div>
+          </div>
+          <div class="status-missing-list">
+            ${filesHtml}
+          </div>
+          <div class="status-missing-help">
+            💡 <em>Vérifiez que le dossier racine de vos livres est bien défini dans l'onglet <strong>Stockage</strong>, ou associez directement le fichier ci-dessous.</em>
+          </div>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="file-status-missing-card">
+        <div class="status-missing-header">
+          <span class="status-missing-icon">ℹ️</span>
+          <div>
+            <div class="status-missing-title">Aucun fichier ebook associé dans Calibre</div>
+            <div class="status-missing-subtitle">Cette notice est présente dans metadata.db mais aucun fichier (EPUB, PDF...) n'y est associé.</div>
+          </div>
+        </div>
+        <div class="status-missing-help" style="margin-top: 8px;">
+          💡 <em>Vous pouvez lui associer un fichier (.epub) manuellement à l'aide du bouton ci-dessous.</em>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderAvailableFileCard(epubBlobInfo) {
+    const originText = epubBlobInfo.source === 'local_dir'
+      ? 'dossier local'
+      : epubBlobInfo.source === 'indexeddb'
+        ? 'stockage PWA'
+        : 'démo';
+    const filename = epubBlobInfo.filename || 'ebook.epub';
+    const sizeStr = formatBytes(epubBlobInfo.blob.size || 0);
+
+    return `
+      <div class="file-status-available-card">
+        <div class="status-available-header">
+          <span class="status-available-icon">✓</span>
+          <div>
+            <div class="status-available-title">Fichier EPUB disponible (${sizeStr})</div>
+            <div class="status-available-meta">Source : <strong>${originText}</strong> • <code class="status-code-avail">${escapeHtml(filename)}</code></div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderStars(rating) {
     if (!rating) return '';
     const stars = Math.round(rating / 2);
@@ -789,7 +909,12 @@ const CalibreApp = (function () {
     const fileStatusText = document.getElementById('modal-file-status');
     btnReadEpub.hidden = true;
     btnShare.hidden = true;
-    fileStatusText.textContent = 'Vérification du fichier EPUB...';
+    fileStatusText.innerHTML = `
+      <div class="file-status-checking-card">
+        <div class="spinner-sm"></div>
+        <span>Vérification du fichier EPUB dans la bibliothèque locale...</span>
+      </div>
+    `;
     fileStatusText.className = 'status-checking';
 
     // 2. Open modal IMMEDIATELY: zero latency!
@@ -822,20 +947,20 @@ const CalibreApp = (function () {
       if (epubBlobInfo) {
         btnReadEpub.hidden = false;
         btnShare.hidden = false;
-        const originText = epubBlobInfo.source === 'local_dir' ? 'dossier local' : epubBlobInfo.source === 'indexeddb' ? 'stockage PWA' : 'démo';
-        fileStatusText.textContent = `✓ Fichier EPUB disponible (${formatBytes(epubBlobInfo.blob.size || 0)} - source : ${originText})`;
+        fileStatusText.innerHTML = renderAvailableFileCard(epubBlobInfo);
         fileStatusText.className = 'status-available';
       } else {
-        const formatsInDb = (details.dataFiles || []).map(d => d.format).join(', ');
-        fileStatusText.textContent = formatsInDb
-          ? `Formats Calibre : ${formatsInDb}. Fichier non trouvé dans le dossier local défini.`
-          : `Aucun fichier ebook associé.`;
+        btnReadEpub.hidden = true;
+        btnShare.hidden = true;
+        fileStatusText.innerHTML = renderMissingFileCard(details);
         fileStatusText.className = 'status-missing';
       }
     }).catch((err) => {
       console.warn('Erreur vérification EPUB:', err);
       if (state.selectedBookId === Number(bookId)) {
-        fileStatusText.textContent = 'Fichier non trouvé dans le dossier local.';
+        btnReadEpub.hidden = true;
+        btnShare.hidden = true;
+        fileStatusText.innerHTML = renderMissingFileCard(details);
         fileStatusText.className = 'status-missing';
       }
     });
@@ -848,7 +973,11 @@ const CalibreApp = (function () {
     if (!state.selectedBookId) return;
     const fileInfo = await CalibreDB.getBookBlob(state.selectedBookId, 'EPUB');
     if (!fileInfo) {
-      showToast('Fichier EPUB non disponible. Vérifiez le dossier local dans les Paramètres.', 'warning');
+      const details = CalibreDB.getBookDetails(state.selectedBookId);
+      const expectedFile = (details && details.dataFiles && details.dataFiles[0])
+        ? `${details.dataFiles[0].name}.${details.dataFiles[0].format.toLowerCase()}`
+        : 'fichier ebook';
+      showToast(`Fichier "${expectedFile}" non trouvé dans le dossier local.`, 'warning');
       return;
     }
 
@@ -1313,7 +1442,8 @@ const CalibreApp = (function () {
     closeShelfDetail,
     closeAuthorDetail,
     closeSeriesDetail,
-    filterByTag
+    filterByTag,
+    copyToClipboard
   };
 })();
 

@@ -102,6 +102,10 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html, body {
   font-family: var(--font-family);
   background-color: var(--bg);
@@ -1031,6 +1035,226 @@ dialog::backdrop {
   flex-direction: column;
   gap: 10px;
   margin-top: 16px;
+}
+
+/* File status indicators in Book Detail Modal */
+.file-status-missing-card {
+  background: rgba(224, 104, 95, 0.08);
+  border: 1px solid rgba(224, 104, 95, 0.35);
+  border-left: 4px solid var(--danger);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.status-missing-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.status-missing-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.status-missing-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #ff8e85;
+}
+
+.status-missing-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.status-missing-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.status-missing-file-box {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.status-missing-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.status-missing-badge {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border: 1px solid var(--accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.status-missing-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.status-missing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.status-missing-label {
+  font-size: 0.73rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.status-code-container {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.status-code-text {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.4);
+  color: #f1f5f9;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  padding: 6px 9px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  word-break: break-all;
+  user-select: all;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.status-code-text:hover {
+  border-color: var(--accent);
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.status-code-path {
+  font-size: 0.76rem;
+  color: #cbd5e1;
+}
+
+.btn-copy-code {
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  color: var(--text);
+  padding: 0 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.btn-copy-code:hover {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+
+.status-missing-help {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  padding-top: 8px;
+}
+
+/* Available status card */
+.file-status-available-card {
+  background: rgba(108, 192, 138, 0.08);
+  border: 1px solid rgba(108, 192, 138, 0.35);
+  border-left: 4px solid var(--success);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin: 12px 0;
+}
+
+.status-available-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-available-icon {
+  font-size: 1.25rem;
+  color: var(--success);
+  font-weight: 800;
+}
+
+.status-available-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--success);
+}
+
+.status-available-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.status-code-avail {
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.78rem;
+}
+
+/* Checking status card */
+.file-status-checking-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin: 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.spinner-sm {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
 }
 
 /* Series navigation inside modal */

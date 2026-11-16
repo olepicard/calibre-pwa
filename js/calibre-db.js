@@ -179,15 +179,44 @@ const CalibreDB = (function () {
       try {
         current = await current.getDirectoryHandle(parts[i]);
       } catch (e) {
-        return null;
+        // Fallback: try case-insensitive / normalized match in directory entries
+        let matchedDir = null;
+        try {
+          const target = normalizePath(parts[i]);
+          for await (const [name, handle] of current.entries()) {
+            if (handle.kind === 'directory' && normalizePath(name) === target) {
+              matchedDir = handle;
+              break;
+            }
+          }
+        } catch (e2) {}
+
+        if (matchedDir) {
+          current = matchedDir;
+        } else {
+          return null;
+        }
       }
     }
 
+    const fileName = parts[parts.length - 1];
     try {
-      const fileName = parts[parts.length - 1];
       const fileHandle = await current.getFileHandle(fileName);
       return await fileHandle.getFile();
     } catch (e) {
+      // Fallback: try case-insensitive or matching format in directory
+      try {
+        const target = normalizePath(fileName);
+        const extMatch = target.endsWith('.epub');
+        for await (const [name, handle] of current.entries()) {
+          if (handle.kind === 'file') {
+            const norm = normalizePath(name);
+            if (norm === target || (extMatch && norm.endsWith('.epub'))) {
+              return await handle.getFile();
+            }
+          }
+        }
+      } catch (e2) {}
       return null;
     }
   }
@@ -1179,11 +1208,30 @@ const CalibreDB = (function () {
         const matchingFiles = bookDetails.dataFiles.filter((d) => d.format === fmt);
 
         for (const d of matchingFiles) {
+          const ext = fmt.toLowerCase();
+          const fileName = `${d.name}.${ext}`;
+
           // Standard Calibre path: `<books.path>/<data.name>.<fmt>`
-          const relPath = `${bookDetails.path}/${d.name}.${fmt.toLowerCase()}`;
-          const file = await resolveFileInHandle(localDirectoryHandle, relPath);
+          const relPath = `${bookDetails.path}/${fileName}`;
+          let file = await resolveFileInHandle(localDirectoryHandle, relPath);
           if (file) {
-            return { blob: file, filename: `${d.name}.${fmt.toLowerCase()}`, source: 'local_dir' };
+            return { blob: file, filename: fileName, source: 'local_dir' };
+          }
+
+          // If the handle was connected inside an author or subfolder:
+          const pathParts = (bookDetails.path || '').replace(/\\/g, '/').split('/').filter(Boolean);
+          if (pathParts.length > 1) {
+            const subRelPath = `${pathParts[pathParts.length - 1]}/${fileName}`;
+            file = await resolveFileInHandle(localDirectoryHandle, subRelPath);
+            if (file) {
+              return { blob: file, filename: fileName, source: 'local_dir' };
+            }
+          }
+
+          // Direct file check
+          file = await resolveFileInHandle(localDirectoryHandle, fileName);
+          if (file) {
+            return { blob: file, filename: fileName, source: 'local_dir' };
           }
         }
 
@@ -1196,23 +1244,38 @@ const CalibreDB = (function () {
       }
 
       // 2. Check localFileMap / epubIndex (from webkitdirectory or previous scan)
-      if (bookDetails && localFileMap.size > 0) {
+      if (bookDetails && (localFileMap.size > 0 || epubIndex.size > 0)) {
         const basePath = normalizePath(bookDetails.path);
         const matchingFiles = bookDetails.dataFiles.filter((d) => d.format === fmt);
 
         for (const d of matchingFiles) {
+          const ext = fmt.toLowerCase();
+          const normFile = normalizePath(`${d.name}.${ext}`);
           const cands = [
-            `${basePath}/${normalizePath(d.name)}.${fmt.toLowerCase()}`,
-            normalizePath(`${d.name}.${fmt.toLowerCase()}`)
+            `${basePath}/${normFile}`,
+            normFile
           ];
           for (const cand of cands) {
-            const match = localFileMap.get(cand);
+            const match = localFileMap.get(cand) || epubIndex.get(cand);
             if (match) {
               let fileObj = match;
               if (typeof match.getFile === 'function') {
                 fileObj = await match.getFile();
               }
-              return { blob: fileObj, filename: fileObj.name, source: 'local_dir' };
+              return { blob: fileObj, filename: fileObj.name || `${d.name}.${ext}`, source: 'local_dir' };
+            }
+          }
+
+          // Fallback search across epubIndex by suffix or normalized name
+          if (fmt === 'EPUB') {
+            for (const [key, fileHandle] of epubIndex.entries()) {
+              if (key === normFile || key.endsWith('/' + normFile)) {
+                let fileObj = fileHandle;
+                if (typeof fileObj.getFile === 'function') {
+                  fileObj = await fileObj.getFile();
+                }
+                return { blob: fileObj, filename: fileObj.name || `${d.name}.${ext}`, source: 'local_dir' };
+              }
             }
           }
         }
