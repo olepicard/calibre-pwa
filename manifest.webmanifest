@@ -1,0 +1,53 @@
+{
+  "id": "./",
+  "name": "Calibre-Web PWA",
+  "short_name": "Calibre-Web",
+  "description": "Lecteur et catalogue de livres Calibre autonome pour Android avec base metadata.db locale",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#161b22",
+  "theme_color": "#1f242d",
+  "lang": "fr",
+  "categories": ["books", "utilities", "productivity"],
+  "icons": [
+    {
+      "src": "./icon.png",
+      "sizes": "800x800",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon.png",
+      "sizes": "800x800",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./favicon.ico",
+      "sizes": "48x48 32x32 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Bibliothèque",
+      "short_name": "Livres",
+      "url": "./index.html#books",
+      "description": "Parcourir les livres"
+    },
+    {
+      "name": "Auteurs",
+      "short_name": "Auteurs",
+      "url": "./index.html#authors",
+      "description": "Parcourir par auteur"
+    },
+    {
+      "name": "Paramètres / Base",
+      "short_name": "Base de données",
+      "url": "./index.html#settings",
+      "description": "Gérer la base metadata.db"
+    }
+  ]
+}

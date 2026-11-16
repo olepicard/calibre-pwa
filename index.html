@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="fr" class="theme-dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  
+  <title>Calibre-Web PWA</title>
+  <meta name="description" content="Lecteur et catalogue de livres Calibre pour Android avec base metadata.db locale">
+  <meta name="theme-color" content="#12161c">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Calibre-Web">
+
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" type="image/png" href="./icon.png">
+  <link rel="apple-touch-icon" href="./icon.png">
+
+  <link rel="stylesheet" href="./css/app.css">
+</head>
+<body>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="header-top">
+      <a href="#books" class="header-brand" onclick="CalibreApp.switchTab('books'); return false;">
+        <img src="./icon.png" alt="Logo Calibre" class="app-logo">
+        <span class="app-title">Calibre-Web</span>
+      </a>
+
+      <div class="header-actions">
+        <span id="db-status-badge" class="status-badge badge-warning">Connexion...</span>
+        
+        <!-- PWA Install Button (Web Install API / beforeinstallprompt) -->
+        <button id="btn-install-app" class="btn btn-primary" type="button" hidden>
+          📲 Installer
+        </button>
+
+        <!-- Theme toggle -->
+        <button id="btn-theme-toggle" class="btn-icon" type="button" aria-label="Changer de thème" title="Changer de thème">
+          🎨
+        </button>
+      </div>
+    </div>
+
+    <!-- Search Bar -->
+    <div class="search-bar-container">
+      <span class="search-icon">🔍</span>
+      <input type="search" id="search-input" class="search-input" placeholder="Rechercher par titre ou auteur..." autocomplete="off">
+      <button type="button" id="search-clear-btn" class="search-clear-btn" aria-label="Effacer la recherche" hidden>×</button>
+    </div>
+  </header>
+
+  <!-- Controls Bar -->
+  <div class="controls-bar">
+    <div id="books-count-header" class="books-count-header">0 livres</div>
+    <div class="controls-right">
+      <select id="sort-select" class="sort-select" aria-label="Trier par">
+        <option value="timestamp_desc">Récents d'abord</option>
+        <option value="title_asc">Titre (A-Z)</option>
+        <option value="title_desc">Titre (Z-A)</option>
+        <option value="author_asc">Auteur (A-Z)</option>
+        <option value="pubdate_desc">Date de publication</option>
+        <option value="rating_desc">Mieux notés</option>
+      </select>
+      <button type="button" id="btn-view-grid" class="view-mode-btn active" title="Grille" aria-label="Affichage grille">⊞</button>
+      <button type="button" id="btn-view-list" class="view-mode-btn" title="Liste" aria-label="Affichage liste">☰</button>
+    </div>
+  </div>
+
+  <!-- Active Filter Chips -->
+  <div id="active-filters" class="active-filters" hidden></div>
+
+  <!-- Main Content Container -->
+  <main class="main-content">
+    
+    <!-- Tab 1: Books (Library) -->
+    <section id="section-books" class="tab-section active">
+      <div id="books-container" class="view-mode-grid"></div>
+      
+      <div id="no-books-found" class="empty-state-card" hidden>
+        <div class="empty-state-icon">🔍</div>
+        <h3>Aucun livre trouvé</h3>
+        <p>Essayez de modifier vos termes de recherche ou de retirer les filtres actifs.</p>
+      </div>
+
+      <div id="loading-indicator" class="loading-indicator" hidden>
+        <div class="spinner"></div>
+        <span>Chargement des livres...</span>
+      </div>
+    </section>
+
+    <!-- Tab 2: Authors -->
+    <section id="section-authors" class="tab-section">
+      <h2 style="font-size: 1.15rem; margin-bottom: 12px;">Tous les auteurs</h2>
+      <div id="authors-list-container" class="list-container"></div>
+    </section>
+
+    <!-- Tab 3: Series -->
+    <section id="section-series" class="tab-section">
+      <h2 style="font-size: 1.15rem; margin-bottom: 12px;">Toutes les séries</h2>
+      <div id="series-list-container" class="list-container"></div>
+    </section>
+
+    <!-- Tab 4: Tags -->
+    <section id="section-tags" class="tab-section">
+      <h2 style="font-size: 1.15rem; margin-bottom: 12px;">Genres & Étiquettes</h2>
+      <div id="tags-list-container" class="list-container"></div>
+    </section>
+
+    <!-- Tab 5: Settings / Database -->
+    <section id="section-settings" class="tab-section">
+      <h2 style="font-size: 1.15rem; margin-bottom: 16px;">Gestion de la Bibliothèque</h2>
+
+      <!-- Stats Grid -->
+      <div id="stats-summary" class="stats-grid"></div>
+
+      <!-- Database Actions -->
+      <div class="settings-section">
+        <h3>🗄️ Base de données metadata.db</h3>
+        <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 14px;">
+          Chargez votre base de données Calibre SQLite pour naviguer dans l'intégralité de vos livres sans connexion Internet.
+        </p>
+
+        <!-- Hidden inputs -->
+        <input type="file" id="input-file-db" accept=".db" style="display: none;">
+        <input type="file" id="input-folder" webkitdirectory directory multiple style="display: none;">
+
+        <div class="settings-actions">
+          <button type="button" class="btn btn-primary" onclick="document.getElementById('input-file-db').click()">
+            🗄️ Charger metadata.db
+          </button>
+          <button type="button" id="btn-pick-folder" class="btn btn-secondary">
+            📁 Sélectionner le dossier Calibre
+          </button>
+          <button type="button" id="btn-load-demo" class="btn btn-ghost">
+            🚀 Charger la base exemple
+          </button>
+          <button type="button" id="btn-export-db" class="btn btn-secondary">
+            💾 Exporter la base
+          </button>
+        </div>
+      </div>
+
+      <!-- Storage Info -->
+      <div class="settings-section">
+        <h3>📊 Stockage local smartphone</h3>
+        <div id="storage-usage-info" style="font-size: 0.9rem; line-height: 1.8;">
+          Calcul de l'espace...
+        </div>
+        <div style="margin-top: 14px;">
+          <button type="button" id="btn-clear-db" class="btn btn-danger">
+            🗑️ Vider le stockage local
+          </button>
+        </div>
+      </div>
+
+      <!-- App Info -->
+      <div class="settings-section">
+        <h3>📱 À propos</h3>
+        <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6;">
+          <strong>Calibre-Web PWA</strong> – Version JavaScript autonome.<br>
+          Moteur SQLite WebAssembly (sql.js) avec persistance IndexedDB.<br>
+          Lecteur EPUB intégré (epub.js), support PDF et partage vers applications Android.
+        </p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Mobile Bottom Navigation Bar -->
+  <nav class="bottom-nav">
+    <button type="button" class="nav-tab active" data-tab="books">
+      <span class="nav-tab-icon">📖</span>
+      <span>Livres</span>
+    </button>
+    <button type="button" class="nav-tab" data-tab="authors">
+      <span class="nav-tab-icon">👤</span>
+      <span>Auteurs</span>
+    </button>
+    <button type="button" class="nav-tab" data-tab="series">
+      <span class="nav-tab-icon">📚</span>
+      <span>Séries</span>
+    </button>
+    <button type="button" class="nav-tab" data-tab="tags">
+      <span class="nav-tab-icon">🏷️</span>
+      <span>Tags</span>
+    </button>
+    <button type="button" class="nav-tab" data-tab="settings">
+      <span class="nav-tab-icon">⚙️</span>
+      <span>Stockage</span>
+    </button>
+  </nav>
+
+  <!-- Book Detail Modal Dialog -->
+  <dialog id="book-detail-dialog" closedby="any" aria-labelledby="modal-book-title">
+    <div class="modal-content-card">
+      <div class="modal-header">
+        <span style="font-size: 0.8rem; font-weight: 700; color: var(--accent-color); text-transform: uppercase;">Détails du livre</span>
+        <button type="button" id="modal-close-btn" class="modal-close-btn" aria-label="Fermer">✕</button>
+      </div>
+
+      <div class="book-detail-grid">
+        <div class="modal-cover-col">
+          <img id="modal-book-cover" class="modal-cover-img" src="" alt="Couverture">
+        </div>
+
+        <div class="modal-info-col">
+          <h2 id="modal-book-title" class="modal-title"></h2>
+          <p id="modal-book-author" class="modal-author"></p>
+
+          <div id="modal-series-row" class="modal-meta-row" hidden>
+            <strong>Série :</strong> <span id="modal-book-series"></span>
+          </div>
+
+          <div id="modal-rating-row" class="modal-meta-row" hidden>
+            <strong>Note :</strong> <span id="modal-book-rating"></span>
+          </div>
+
+          <div id="modal-pub-row" class="modal-meta-row" hidden>
+            <strong>Éditeur :</strong> <span id="modal-book-publisher"></span>
+          </div>
+
+          <div>
+            <div id="modal-tags-container" class="modal-tags"></div>
+          </div>
+
+          <div id="modal-file-status" class="status-missing" style="margin: 10px 0;"></div>
+
+          <div class="modal-actions">
+            <button type="button" id="modal-read-epub-btn" class="btn btn-primary" hidden>
+              📖 Lire maintenant (EPUB)
+            </button>
+            <button type="button" id="modal-read-pdf-btn" class="btn btn-primary" hidden>
+              📄 Ouvrir le PDF
+            </button>
+            <button type="button" id="modal-share-btn" class="btn btn-secondary" hidden>
+              📲 Ouvrir dans Moon+ / ReadEra / Partager
+            </button>
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('input-associate-file').click()">
+              📎 Associer un fichier ebook (.epub, .pdf)
+            </button>
+            <input type="file" id="input-associate-file" accept=".epub,.pdf,.cbz,.txt" style="display: none;">
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top: 18px;">
+        <h4 style="font-size: 0.9rem; margin-bottom: 6px;">Résumé / Description</h4>
+        <div id="modal-book-comment" class="modal-comment"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- EPUB Reader Fullscreen Modal Dialog -->
+  <dialog id="reader-dialog" closedby="any" aria-label="Lecteur EPUB">
+    <div class="reader-container">
+      <!-- Reader Header -->
+      <div class="reader-header">
+        <button type="button" class="btn-icon" onclick="CalibreReader.toggleToc()" aria-label="Sommaire" title="Table des matières">
+          📑
+        </button>
+        <span id="reader-title" class="reader-header-title">Lecteur</span>
+        <div class="reader-header-actions">
+          <button type="button" class="btn-icon" onclick="CalibreReader.changeFontSize(-10)" aria-label="Diminuer la police" title="A-">A-</button>
+          <button type="button" class="btn-icon" onclick="CalibreReader.changeFontSize(10)" aria-label="Agrandir la police" title="A+">A+</button>
+          <button type="button" class="btn-icon theme-btn" onclick="CalibreReader.setTheme('dark')" title="Sombre">🌙</button>
+          <button type="button" class="btn-icon theme-btn" onclick="CalibreReader.setTheme('sepia')" title="Sépia">📜</button>
+          <button type="button" class="btn-icon theme-btn" onclick="CalibreReader.setTheme('light')" title="Clair">☀️</button>
+          <button type="button" class="btn-icon" onclick="CalibreReader.toggleFullscreen()" aria-label="Plein écran" title="Plein écran">⛶</button>
+          <button type="button" class="btn-icon" onclick="CalibreReader.close()" aria-label="Quitter le lecteur" title="Fermer">✕</button>
+        </div>
+      </div>
+
+      <!-- TOC Drawer -->
+      <aside id="reader-toc-drawer" class="reader-toc-drawer">
+        <div class="reader-toc-header">
+          <span>Table des matières</span>
+          <button type="button" class="btn-icon" onclick="CalibreReader.toggleToc(false)">✕</button>
+        </div>
+        <ul id="reader-toc-list" class="reader-toc-list"></ul>
+      </aside>
+
+      <!-- Viewer Area -->
+      <div class="reader-main-area">
+        <button type="button" class="reader-arrow reader-arrow-prev" onclick="CalibreReader.prev()" aria-label="Page précédente">‹</button>
+        <div id="reader-viewer"></div>
+        <button type="button" class="reader-arrow reader-arrow-next" onclick="CalibreReader.next()" aria-label="Page suivante">›</button>
+      </div>
+
+      <!-- Reader Footer -->
+      <div class="reader-footer">
+        <div class="reader-progress-bar-container">
+          <div id="reader-progress-bar" class="reader-progress-bar"></div>
+        </div>
+        <span id="reader-progress-text" class="reader-progress-text">0%</span>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Toast Notification -->
+  <div id="app-toast" class="toast"></div>
+
+  <!-- JavaScript Libraries -->
+  <script src="./lib/sql-wasm.js"></script>
+  <script src="./lib/jszip.min.js"></script>
+  <script src="./lib/epub.min.js"></script>
+
+  <!-- Application Modules -->
+  <script src="./js/storage.js"></script>
+  <script src="./js/calibre-db.js"></script>
+  <script src="./js/reader-epub.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>
