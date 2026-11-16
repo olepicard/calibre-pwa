@@ -186,18 +186,18 @@ const CalibreApp = (function () {
   function setupDialogDismissFallbacks() {
     const dialogs = document.querySelectorAll('dialog');
     dialogs.forEach((dialog) => {
-      if (!('closedBy' in HTMLDialogElement.prototype)) {
-        dialog.addEventListener('click', (event) => {
-          if (event.target !== dialog) return;
-          const rect = dialog.getBoundingClientRect();
-          const isContent = (
-            rect.top <= event.clientY &&
-            event.clientY <= rect.top + rect.height &&
-            rect.left <= event.clientX &&
-            event.clientX <= rect.left + rect.width
-          );
-          if (isContent) return;
+      // Light-dismiss click on backdrop
+      dialog.addEventListener('click', (event) => {
+        if (event.target === dialog) {
           dialog.close();
+        }
+      });
+
+      // Prevent clicks inside modal card from bubbling and triggering dismiss
+      const innerCard = dialog.querySelector('.modal-content-card, .reader-container');
+      if (innerCard) {
+        innerCard.addEventListener('click', (event) => {
+          event.stopPropagation();
         });
       }
     });
@@ -291,9 +291,14 @@ const CalibreApp = (function () {
     document.getElementById('btn-create-shelf').addEventListener('click', promptCreateShelf);
 
     // Book Detail Modal Buttons
-    document.getElementById('modal-close-btn').addEventListener('click', () => {
-      document.getElementById('book-detail-dialog').close();
-    });
+    const modalCloseBtn = document.getElementById('modal-close-btn');
+    if (modalCloseBtn) {
+      modalCloseBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        document.getElementById('book-detail-dialog').close();
+      });
+    }
 
     document.getElementById('modal-read-epub-btn').addEventListener('click', readCurrentBook);
     document.getElementById('modal-share-btn').addEventListener('click', shareCurrentBook);
@@ -640,11 +645,21 @@ const CalibreApp = (function () {
   async function openBookDetail(bookId) {
     state.selectedBookId = Number(bookId);
     const dialog = document.getElementById('book-detail-dialog');
-    const details = CalibreDB.getBookDetails(bookId);
-    if (!details) return;
+    if (!dialog) return;
 
-    document.getElementById('modal-book-title').textContent = details.title;
-    document.getElementById('modal-book-author').textContent = details.authors.map(a => a.name).join(', ') || details.author_sort || 'Auteur inconnu';
+    const details = CalibreDB.getBookDetails(bookId);
+    if (!details) {
+      console.warn('Livre introuvable dans la base Calibre:', bookId);
+      showToast('Détails du livre indisponibles.', 'warning');
+      return;
+    }
+
+    // 1. Populate basic metadata synchronously
+    document.getElementById('modal-book-title').textContent = details.title || 'Sans titre';
+    const authorsStr = (details.authors && details.authors.length > 0)
+      ? details.authors.map(a => (a.name || a.sort || '').replace(/\|/g, ', ')).join(', ')
+      : (details.author_sort || 'Auteur inconnu');
+    document.getElementById('modal-book-author').textContent = authorsStr;
 
     // Series row & series navigation
     const seriesRow = document.getElementById('modal-series-row');
@@ -655,11 +670,39 @@ const CalibreApp = (function () {
 
       if (details.seriesNavigation && (details.seriesNavigation.prev || details.seriesNavigation.next)) {
         seriesNav.hidden = false;
-        seriesNav.innerHTML = `
-          ${details.seriesNavigation.prev ? `<button class="series-nav-btn" onclick="CalibreApp.openBookDetail(${details.seriesNavigation.prev.id})">‹ Tome ${details.seriesNavigation.prev.index}</button>` : '<span></span>'}
-          <span>${details.seriesNavigation.seriesName}</span>
-          ${details.seriesNavigation.next ? `<button class="series-nav-btn" onclick="CalibreApp.openBookDetail(${details.seriesNavigation.next.id})">Tome ${details.seriesNavigation.next.index} ›</button>` : '<span></span>'}
-        `;
+        seriesNav.innerHTML = '';
+
+        if (details.seriesNavigation.prev) {
+          const prevBtn = document.createElement('button');
+          prevBtn.type = 'button';
+          prevBtn.className = 'series-nav-btn';
+          prevBtn.textContent = `‹ Tome ${details.seriesNavigation.prev.index}`;
+          prevBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openBookDetail(details.seriesNavigation.prev.id);
+          });
+          seriesNav.appendChild(prevBtn);
+        } else {
+          seriesNav.appendChild(document.createElement('span'));
+        }
+
+        const seriesTitle = document.createElement('span');
+        seriesTitle.textContent = details.seriesNavigation.seriesName;
+        seriesNav.appendChild(seriesTitle);
+
+        if (details.seriesNavigation.next) {
+          const nextBtn = document.createElement('button');
+          nextBtn.type = 'button';
+          nextBtn.className = 'series-nav-btn';
+          nextBtn.textContent = `Tome ${details.seriesNavigation.next.index} ›`;
+          nextBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openBookDetail(details.seriesNavigation.next.id);
+          });
+          seriesNav.appendChild(nextBtn);
+        } else {
+          seriesNav.appendChild(document.createElement('span'));
+        }
       } else {
         seriesNav.hidden = true;
       }
@@ -686,10 +729,6 @@ const CalibreApp = (function () {
       pubRow.hidden = true;
     }
 
-    // Reading Status Selector
-    const currentStatus = await CalibreStorage.getReadingStatus(bookId);
-    document.getElementById('modal-reading-status-select').value = currentStatus;
-
     // Tags
     const tagsContainer = document.getElementById('modal-tags-container');
     tagsContainer.innerHTML = '';
@@ -699,7 +738,8 @@ const CalibreApp = (function () {
         badge.type = 'button';
         badge.className = 'tag-badge';
         badge.textContent = tag.name;
-        badge.addEventListener('click', () => {
+        badge.addEventListener('click', (e) => {
+          e.stopPropagation();
           dialog.close();
           filterByTag(tag.id, tag.name);
         });
@@ -718,36 +758,66 @@ const CalibreApp = (function () {
       commentEl.innerHTML = '<em>Aucune description disponible pour ce livre.</em>';
     }
 
-    // Cover image
+    // Immediate placeholder cover
     const coverImg = document.getElementById('modal-book-cover');
-    coverImg.src = await CalibreDB.getCoverUrl(details);
+    coverImg.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300"><rect width="100%" height="100%" fill="%231a232e"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="%2394a3b8" font-family="sans-serif" font-size="14">Couverture...</text></svg>';
 
-    // Look for EPUB file in the local directory or storage
+    // Immediate initial buttons state
     const btnReadEpub = document.getElementById('modal-read-epub-btn');
     const btnShare = document.getElementById('modal-share-btn');
     const fileStatusText = document.getElementById('modal-file-status');
-
     btnReadEpub.hidden = true;
     btnShare.hidden = true;
+    fileStatusText.textContent = 'Vérification du fichier EPUB...';
+    fileStatusText.className = 'status-checking';
 
-    // Try finding EPUB directly
-    const epubBlobInfo = await CalibreDB.getBookBlob(bookId, 'EPUB');
-
-    if (epubBlobInfo) {
-      btnReadEpub.hidden = false;
-      btnShare.hidden = false;
-      const originText = epubBlobInfo.source === 'local_dir' ? 'dossier local' : epubBlobInfo.source === 'indexeddb' ? 'stockage PWA' : 'démo';
-      fileStatusText.textContent = `✓ Fichier EPUB disponible (${formatBytes(epubBlobInfo.blob.size || 0)} - source : ${originText})`;
-      fileStatusText.className = 'status-available';
+    // 2. Open modal IMMEDIATELY: zero latency!
+    if (typeof dialog.showModal === 'function') {
+      if (!dialog.open) {
+        dialog.showModal();
+      }
     } else {
-      const formatsInDb = details.dataFiles.map(d => d.format).join(', ');
-      fileStatusText.textContent = formatsInDb
-        ? `Formats Calibre : ${formatsInDb}. Fichier non trouvé dans le dossier local défini.`
-        : `Aucun fichier ebook associé.`;
-      fileStatusText.className = 'status-missing';
+      dialog.setAttribute('open', '');
     }
 
-    dialog.showModal();
+    // 3. Asynchronously load Reading Status
+    CalibreStorage.getReadingStatus(bookId).then((currentStatus) => {
+      if (state.selectedBookId === Number(bookId)) {
+        document.getElementById('modal-reading-status-select').value = currentStatus;
+      }
+    }).catch(console.warn);
+
+    // 4. Asynchronously load Cover URL
+    CalibreDB.getCoverUrl(details).then((url) => {
+      if (state.selectedBookId === Number(bookId) && url) {
+        coverImg.src = url;
+      }
+    }).catch(console.warn);
+
+    // 5. Asynchronously check EPUB availability
+    CalibreDB.getBookBlob(bookId, 'EPUB').then((epubBlobInfo) => {
+      if (state.selectedBookId !== Number(bookId)) return;
+
+      if (epubBlobInfo) {
+        btnReadEpub.hidden = false;
+        btnShare.hidden = false;
+        const originText = epubBlobInfo.source === 'local_dir' ? 'dossier local' : epubBlobInfo.source === 'indexeddb' ? 'stockage PWA' : 'démo';
+        fileStatusText.textContent = `✓ Fichier EPUB disponible (${formatBytes(epubBlobInfo.blob.size || 0)} - source : ${originText})`;
+        fileStatusText.className = 'status-available';
+      } else {
+        const formatsInDb = (details.dataFiles || []).map(d => d.format).join(', ');
+        fileStatusText.textContent = formatsInDb
+          ? `Formats Calibre : ${formatsInDb}. Fichier non trouvé dans le dossier local défini.`
+          : `Aucun fichier ebook associé.`;
+        fileStatusText.className = 'status-missing';
+      }
+    }).catch((err) => {
+      console.warn('Erreur vérification EPUB:', err);
+      if (state.selectedBookId === Number(bookId)) {
+        fileStatusText.textContent = 'Fichier non trouvé dans le dossier local.';
+        fileStatusText.className = 'status-missing';
+      }
+    });
   }
 
   /**
@@ -1218,6 +1288,9 @@ const CalibreApp = (function () {
     filterByTag
   };
 })();
+
+// Attach globally to window
+window.CalibreApp = CalibreApp;
 
 document.addEventListener('DOMContentLoaded', () => {
   CalibreApp.init();

@@ -361,3 +361,6 @@ const CalibreReader = (function () {
     }
   };
 })();
+
+// Attach globally to window
+window.CalibreReader = CalibreReader;

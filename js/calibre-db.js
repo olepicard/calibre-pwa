@@ -53,11 +53,20 @@ const CalibreDB = (function () {
    * Generate NextGen elevated SVG Book Cover
    */
   function generateNextGenCover(title, author, bookId = 0) {
-    const safeTitle = (title || 'Sans Titre')
+    let authorStr = 'Auteur Inconnu';
+    if (Array.isArray(author)) {
+      authorStr = author.map(a => (typeof a === 'string' ? a : (a && (a.name || a.sort)) || '')).filter(Boolean).join(', ') || 'Auteur Inconnu';
+    } else if (typeof author === 'string' && author.trim()) {
+      authorStr = author.trim();
+    } else if (author && typeof author === 'object') {
+      authorStr = author.name || author.sort || 'Auteur Inconnu';
+    }
+
+    const safeTitle = String(title || 'Sans Titre')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
-    const safeAuthor = (author || 'Auteur Inconnu')
+    const safeAuthor = String(authorStr)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
@@ -1145,7 +1154,14 @@ const CalibreDB = (function () {
       }
 
       // 3. Fallback: generate NextGen SVG cover
-      const authorText = book.authors || book.author_sort || '';
+      let authorText = '';
+      if (Array.isArray(book.authors)) {
+        authorText = book.authors.map(a => (typeof a === 'string' ? a : (a && (a.name || a.sort)) || '')).filter(Boolean).join(', ');
+      } else if (typeof book.authors === 'string') {
+        authorText = book.authors;
+      } else if (book.author_sort) {
+        authorText = String(book.author_sort);
+      }
       return generateNextGenCover(book.title, authorText, book.id);
     },
 
@@ -1208,18 +1224,23 @@ const CalibreDB = (function () {
         return { blob: stored.blob, filename: stored.filename, source: 'indexeddb' };
       }
 
-      // 4. Fallback for demo sample book (bookId 1)
+      // 4. Fallback for demo sample book (only for demo library)
       if (bId === 1 && fmt === 'EPUB') {
-        try {
-          const resp = await fetch('./sample.epub');
-          if (resp.ok) {
-            const blob = await resp.blob();
-            return { blob, filename: 'Vingt mille lieues sous les mers.epub', source: 'demo' };
-          }
-        } catch (e) {}
+        if (bookDetails && (String(bookDetails.title).toLowerCase().includes('vingt mille lieues') || String(bookDetails.author_sort).toLowerCase().includes('verne'))) {
+          try {
+            const resp = await fetch('./sample.epub');
+            if (resp.ok) {
+              const blob = await resp.blob();
+              return { blob, filename: 'Vingt mille lieues sous les mers.epub', source: 'demo' };
+            }
+          } catch (e) {}
+        }
       }
 
       return null;
     }
   };
 })();
+
+// Attach globally to window
+window.CalibreDB = CalibreDB;

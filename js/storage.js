@@ -496,3 +496,6 @@ const CalibreStorage = (function () {
     }
   };
 })();
+
+// Attach globally to window
+window.CalibreStorage = CalibreStorage;
