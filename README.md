@@ -1,105 +1,94 @@
-# 📚 Calibre-Web PWA - Version Mobile Android 100% Hors-ligne
+# 📚 Calibre-Web NextGen PWA - Version Mobile Android 100% Hors-ligne
 
-Une Progressive Web App (PWA) moderne, réactive et autonome, conçue pour faire fonctionner votre bibliothèque **Calibre** directement sur votre smartphone **Android**, sans nécessiter de serveur en arrière-plan ni de connexion Internet.
+Une Progressive Web App (PWA) moderne et réactive reprenant l'ensemble de l'architecture et du design **Calibre-Web NextGen ("caliBlur, elevated")**, conçue pour faire fonctionner votre bibliothèque Calibre directement sur votre smartphone **Android**, sans serveur et 100% hors-ligne.
 
-Elle utilise directement le fichier **`metadata.db`** au format Calibre SQLite, stocké et exécuté en local sur votre appareil grâce à **WebAssembly (sql.js)** et **IndexedDB**.
+Elle utilise directement le fichier **`metadata.db`** (format SQLite Calibre) et permet d'ouvrir et de lire vos **fichiers EPUB directement depuis un répertoire local** de votre smartphone ou PC, défini dans les **Paramètres**.
 
-🔗 **Accès direct & Installation en ligne (GitHub Pages) :**
+---
+
+🔗 **Accès direct & Installation en ligne (GitHub Pages) :**  
 👉 **[https://olepicard.github.io/calibre-pwa/](https://olepicard.github.io/calibre-pwa/)**
 
 ---
 
-## 🌟 Points Forts
+## 🌟 Nouvelles Fonctionnalités NextGen
 
-- 📱 **PWA Installable sur Android** : S'installe comme une application native depuis Google Chrome / Brave / Edge (icône sur l'écran d'accueil, affichage plein écran sans barre d'adresse).
-- 📴 **100% Hors-ligne (Offline First)** : Le Service Worker met en cache tous les scripts, styles, polices et le moteur WebAssembly. Fonctionne même en mode avion.
-- ⚡ **Moteur SQLite WebAssembly ultra-rapide** : Exécute des requêtes SQL natives directement dans le navigateur du smartphone. Testé avec succès sur des bibliothèques de plus de **35 000 livres**.
-- 💾 **Persistance locale dans le smartphone** : Le fichier `metadata.db` et vos livres associés sont sauvegardés dans l'IndexedDB du téléphone. Vous ne le chargez qu'une seule fois !
-- 📖 **Lecteur EPUB intégré (tactile)** :
-  - Navigation par balayage tactile (*swipe* gauche/droite pour tourner les pages)
-  - Thèmes de lecture : Sombre, Clair, Sépia, Noir OLED
-  - Réglage de la taille de texte (A- / A+)
-  - Table des matières dynamique (sommaire)
-  - Sauvegarde automatique de la progression de lecture (reprise exacte là où vous vous êtes arrêté)
-- 📲 **Intégration Android (Web Share API)** : Possibilité d'ouvrir et de partager vos ebooks directement dans vos liseuses Android préférées (*ReadEra*, *Moon+ Reader*, *FBReader*...).
-- 🎨 **Interface Calibre-Web soignée** :
-  - Barre de navigation mobile en bas de l'écran (Livres, Auteurs, Séries, Tags, Paramètres)
-  - Mode Grille (avec couvertures) ou Liste compacte
-  - Recherche instantanée avec filtre intelligent
-  - Générateur automatique de couvertures élégantes si les fichiers d'image ne sont pas présents
+- 📁 **Répertoire local des livres (EPUB) configurable dans les Paramètres** :
+  - Définissez votre dossier Calibre ou dossier d'ebooks via le sélecteur de dossier natif (*File System Access API* / `showDirectoryPicker`).
+  - La poignée du dossier (*DirectoryHandle*) est **conservée de manière persistante dans IndexedDB** : l'accès au dossier est mémorisé à chaque ouverture de l'application !
+  - Lors de l'ouverture d'un livre, l'application résout automatiquement l'EPUB correspondant dans l'arborescence Calibre (`<Auteur>/<Titre (id)>/<fichier>.epub`) ou par indexation intelligente.
+  - Compteur et statut en temps réel : nombre d'EPUBs détectés, bouton de ré-indexation en 1 clic.
+
+- ✨ **Étagères Intelligentes (*Smart / Magic Shelves*) sur l'Accueil** :
+  - **📖 Continuer la lecture** : reprend vos lectures en cours avec barre de progression de lecture sur la couverture.
+  - **✨ Récemment ajoutés** : vos dernières acquisitions.
+  - **⭐ Les mieux notés** : vos livres 4 et 5 étoiles.
+  - **🎲 Découverte au hasard** : sélection aléatoire pour trouver de nouvelles inspirations.
+
+- 📚 **Étagères Personnalisées (*Custom Shelves*)** :
+  - Créez vos propres étagères (« Coups de cœur », « À lire cet été », « Science-fiction »).
+  - Ajoutez ou retirez des livres depuis leur fiche détaillée.
+
+- 🏷️ **Navigation par Série & Statuts de lecture** :
+  - Sélecteur de statut sur chaque livre : **⚪ Non lu**, **📖 En cours**, **✓ Terminé**.
+  - Navigation directe entre tomes au sein d'une série (*« ‹ Tome 1 »* / *« Tome 3 › »*).
+  - Vues détaillées par Auteur et par Série classées par numéro de tome.
+
+- 🎨 **Design Calibre-Web NextGen ("caliBlur, elevated")** :
+  - Surfaces profondes ardoise-bleue (`#141c24`, `#1b2530`, `#222e3a`), séparateurs fins et texte chaud couleur papier (`#ece8e1`).
+  - Touche signature ambre caliBlur (`#cc7b19`, `#e6a13f`).
+  - Thèmes interchangeables : **NextGen CaliBlur (sombre)**, **Clair**, **Sépia**, **OLED Noir**.
+
+- 📖 **Lecteur EPUB Tactile & Partage Android** :
+  - Tournez les pages par balayage tactile (*swipe* gauche/droite).
+  - Sommaire interactif, taille de police ajustable, mémorisation exacte de la position (CFI).
+  - Bouton de partage Android (Web Share API) pour ouvrir le livre dans *ReadEra*, *Moon+ Reader*, *FBReader*, etc.
 
 ---
 
-## 📂 Structure des Fichiers
+## 📂 Structure du Projet
 
 ```
 calibre-web-master/pwa/
-├── index.html              # Interface principale PWA
-├── manifest.webmanifest    # Configuration PWA Android (icônes, standalone, couleurs)
+├── index.html              # Interface principale Calibre-Web NextGen
+├── manifest.webmanifest    # Manifeste PWA Android
 ├── sw.js                   # Service Worker pour le cache hors-ligne
-├── icon.png                # Icône HD 800x800
+├── icon.png                # Icône haute résolution (800x800)
 ├── favicon.ico             # Favicon
-├── sample-metadata.db      # Base d'exemple Calibre prête à l'emploi
-├── serve.py                # Petit serveur Python pour tester sur PC & smartphone
+├── sample-metadata.db      # Base Calibre SQLite d'exemple
+├── sample.epub             # Ebook EPUB d'exemple pour tester immédiatement
+├── serve.py                # Serveur de test local pour PC et smartphone (Wi-Fi)
 ├── css/
-│   └── app.css             # Styles CSS modernes et responsive Android
+│   └── app.css             # Tokens NextGen ("caliBlur, elevated") et styles tactiles
 ├── js/
-│   ├── app.js              # Contrôleur principal et logique UI
-│   ├── calibre-db.js       # Moteur SQLite Calibre et gestionnaire de fichiers
-│   ├── storage.js          # Couche IndexedDB pour la persistance locale
-│   └── reader-epub.js      # Lecteur EPUB tactile autonome (epub.js)
+│   ├── app.js              # Contrôleur NextGen, Magic Shelves, gestion du dossier
+│   ├── calibre-db.js       # Moteur SQLite WASM & résolution du répertoire local
+│   ├── storage.js          # IndexedDB (metadata.db, DirectoryHandle, étagères, progression)
+│   └── reader-epub.js      # Lecteur EPUB tactile intégré
 └── lib/
-    ├── sql-wasm.js         # Wrapper JS SQLite WebAssembly
-    ├── sql-wasm.wasm       # Binaire WebAssembly SQLite
+    ├── sql-wasm.js         # SQLite WebAssembly
+    ├── sql-wasm.wasm       # Binaire WASM SQLite
     ├── jszip.min.js        # Décompression ZIP/EPUB
-    └── epub.min.js         # Moteur de rendu EPUB
+    └── epub.min.js         # Moteur de rendu epub.js
 ```
 
 ---
 
-## 🚀 Démarrage Rapide
+## 📲 Installation sur Smartphone Android
 
-### 1. Lancer le serveur local depuis votre PC
-
-Dans le dossier `calibre-web-master/pwa`, exécutez simplement :
-
-```powershell
-python serve.py
-```
-
-Le script affichera deux adresses :
-- Sur votre PC : `http://localhost:8080`
-- Sur votre smartphone connecté au même Wi-Fi : `http://192.168.x.x:8080`
-
-### 2. Ouvrir et installer sur Android
-
-1. Sur votre smartphone Android, ouvrez **Google Chrome** et saisissez l'adresse Wi-Fi (ex: `http://192.168.1.50:8080`).
-2. Cliquez sur le bouton **📲 Installer** dans l'en-tête, ou ouvrez le menu de Chrome (les 3 points verticaux en haut à droite) et sélectionnez **"Installer l'application"** ou **"Ajouter à l'écran d'accueil"**.
-3. L'icône **Calibre-Web** apparaît sur l'écran d'accueil de votre smartphone.
-4. Une fois installée, l'application fonctionne même sans le serveur PC et sans connexion Internet !
+1. Rendez-vous sur **[https://olepicard.github.io/calibre-pwa/](https://olepicard.github.io/calibre-pwa/)** depuis **Chrome** ou **Brave** sur votre smartphone.
+2. Cliquez sur le bouton **« 📲 Installer »** dans l'en-tête, ou ouvrez le menu de Chrome (les **3 points verticaux**) et cliquez sur **« Installer l'application »** ou **« Ajouter à l'écran d'accueil »**.
+3. L'application est installée sur votre smartphone et fonctionne **100% hors-ligne**.
 
 ---
 
-## 🗄️ Comment charger votre `metadata.db` sur le smartphone ?
+## ⚙️ Configuration du Répertoire Local dans les Paramètres
 
-Trois options sont à votre disposition dans l'onglet **Stockage / Paramètres** :
-
-1. **Option A : Charger le fichier `metadata.db` seul**
-   - Transférez votre fichier `metadata.db` de votre PC vers votre smartphone (via câble USB, Google Drive, Bluetooth ou téléchargement).
-   - Dans la PWA, cliquez sur **"🗄️ Charger metadata.db"** et sélectionnez le fichier dans vos Téléchargements ou documents.
-   - La base de données est instantanément importée dans l'espace sécurisé du navigateur (IndexedDB). Vous pouvez maintenant explorer l'ensemble de votre catalogue (auteurs, séries, résumés, dates, etc.).
-
-2. **Option B : Sélectionner le dossier complet de votre bibliothèque Calibre**
-   - Si vous avez copié votre dossier Calibre sur votre smartphone ou carte SD (ex: `/Stockage interne/Livres/Calibre/`), cliquez sur **"📁 Sélectionner le dossier Calibre"**.
-   - La PWA détecte automatiquement `metadata.db` à la racine ET associe directement toutes les couvertures (`cover.jpg`) et tous les fichiers ebooks (`.epub`, `.pdf`) pour une lecture directe !
-
-3. **Option C : Essayer la base exemple intégrée**
-   - Cliquez sur **"🚀 Charger la base exemple"** pour tester instantanément l'application avec plusieurs classiques littéraires (Jules Verne, Victor Hugo, Alexandre Dumas, George Orwell...).
-
----
-
-## 📖 Lecture et Gestion des Ebooks
-
-- **Lecteur intégré** : Cliquez sur n'importe quel livre puis sur **"Lire maintenant (EPUB)"** pour ouvrir le lecteur plein écran.
-- **Associer un livre spécifique** : Si vous n'avez importé que `metadata.db`, vous pouvez à tout moment cliquer sur **"📎 Associer un fichier ebook"** dans la fiche d'un livre pour y rattacher son fichier `.epub` ou `.pdf` depuis la mémoire de votre téléphone.
-- **Partage vers d'autres liseuses** : Le bouton **"📲 Ouvrir dans Moon+ / ReadEra"** envoie directement le fichier du livre à l'application de votre choix installée sur votre smartphone Android.
+1. Ouvrez l'application et allez dans l'onglet **⚙️ Stockage** en bas à droite.
+2. Dans la section **📁 Répertoire local des livres (EPUB)** :
+   - Cliquez sur **« 📁 Choisir le dossier local (EPUBs) »**.
+   - Sélectionnez votre dossier de bibliothèque Calibre sur votre smartphone ou PC.
+   - Le navigateur demande l'autorisation de lecture : acceptez.
+   - L'application analyse l'arborescence et affiche le nombre d'EPUBs trouvés (ainsi que `metadata.db` s'il est présent à la racine).
+3. Le dossier reste **connecté et mémorisé dans IndexedDB** pour les sessions futures !
+4. Ouvrez n'importe quel livre : cliquez sur **« 📖 Lire maintenant (EPUB) »** pour lancer la lecture directe du fichier depuis votre dossier local.

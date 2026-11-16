@@ -1,17 +1,17 @@
 <!DOCTYPE html>
-<html lang="fr" class="theme-dark">
+<html lang="fr" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   
-  <title>Calibre-Web PWA</title>
-  <meta name="description" content="Lecteur et catalogue de livres Calibre pour Android avec base metadata.db locale">
-  <meta name="theme-color" content="#12161c">
+  <title>Calibre-Web NextGen PWA</title>
+  <meta name="description" content="Lecteur et catalogue Calibre NextGen pour Android avec base metadata.db locale et ouverture des EPUBs depuis un dossier local">
+  <meta name="theme-color" content="#141c24">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Calibre-Web">
+  <meta name="apple-mobile-web-app-title" content="Calibre NextGen">
 
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" type="image/png" href="./icon.png">
@@ -24,9 +24,12 @@
   <!-- App Header -->
   <header class="app-header">
     <div class="header-top">
-      <a href="#books" class="header-brand" onclick="CalibreApp.switchTab('books'); return false;">
+      <a href="#home" class="header-brand" onclick="CalibreApp.switchTab('home'); return false;">
         <img src="./icon.png" alt="Logo Calibre" class="app-logo">
-        <span class="app-title">Calibre-Web</span>
+        <div class="app-title-group">
+          <span class="app-title">Calibre-Web</span>
+          <span class="app-subtitle">NextGen PWA</span>
+        </div>
       </a>
 
       <div class="header-actions">
@@ -47,7 +50,7 @@
     <!-- Search Bar -->
     <div class="search-bar-container">
       <span class="search-icon">🔍</span>
-      <input type="search" id="search-input" class="search-input" placeholder="Rechercher par titre ou auteur..." autocomplete="off">
+      <input type="search" id="search-input" class="search-input" placeholder="Rechercher par titre, auteur, série..." autocomplete="off">
       <button type="button" id="search-clear-btn" class="search-clear-btn" aria-label="Effacer la recherche" hidden>×</button>
     </div>
   </header>
@@ -63,6 +66,7 @@
         <option value="author_asc">Auteur (A-Z)</option>
         <option value="pubdate_desc">Date de publication</option>
         <option value="rating_desc">Mieux notés</option>
+        <option value="random">Aléatoire</option>
       </select>
       <button type="button" id="btn-view-grid" class="view-mode-btn active" title="Grille" aria-label="Affichage grille">⊞</button>
       <button type="button" id="btn-view-list" class="view-mode-btn" title="Liste" aria-label="Affichage liste">☰</button>
@@ -75,8 +79,44 @@
   <!-- Main Content Container -->
   <main class="main-content">
     
-    <!-- Tab 1: Books (Library) -->
-    <section id="section-books" class="tab-section active">
+    <!-- Tab 0: Home (NextGen Magic Shelves / Smart Shelves) -->
+    <section id="section-home" class="tab-section active">
+      <!-- Continue Reading -->
+      <div id="shelf-continue-reading" class="magic-shelf-section" hidden>
+        <div class="magic-shelf-header">
+          <h2 class="magic-shelf-title">📖 Continuer la lecture</h2>
+        </div>
+        <div class="magic-shelf-scroll"></div>
+      </div>
+
+      <!-- Recently Added -->
+      <div id="shelf-recently-added" class="magic-shelf-section" hidden>
+        <div class="magic-shelf-header">
+          <h2 class="magic-shelf-title">✨ Récemment ajoutés</h2>
+          <a href="#books" class="magic-shelf-link" onclick="CalibreApp.switchTab('books'); return false;">Voir tout ›</a>
+        </div>
+        <div class="magic-shelf-scroll"></div>
+      </div>
+
+      <!-- Top Rated -->
+      <div id="shelf-top-rated" class="magic-shelf-section" hidden>
+        <div class="magic-shelf-header">
+          <h2 class="magic-shelf-title">⭐ Les mieux notés</h2>
+        </div>
+        <div class="magic-shelf-scroll"></div>
+      </div>
+
+      <!-- Random Discover -->
+      <div id="shelf-random" class="magic-shelf-section" hidden>
+        <div class="magic-shelf-header">
+          <h2 class="magic-shelf-title">🎲 Découverte au hasard</h2>
+        </div>
+        <div class="magic-shelf-scroll"></div>
+      </div>
+    </section>
+
+    <!-- Tab 1: Books (Library Catalog) -->
+    <section id="section-books" class="tab-section">
       <div id="books-container" class="view-mode-grid"></div>
       
       <div id="no-books-found" class="empty-state-card" hidden>
@@ -91,48 +131,130 @@
       </div>
     </section>
 
-    <!-- Tab 2: Authors -->
+    <!-- Tab 2: Shelves (Étagères personnalisées) -->
+    <section id="section-shelves" class="tab-section">
+      <div id="shelves-main-view">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h2 style="font-size: 1.15rem;">Mes Étagères</h2>
+          <button type="button" id="btn-create-shelf" class="btn btn-primary" style="padding: 6px 12px; font-size: 0.85rem;">
+            + Créer une étagère
+          </button>
+        </div>
+        <div id="shelves-list-container" class="list-container"></div>
+      </div>
+
+      <!-- Shelf Detail View -->
+      <div id="shelf-detail-view" hidden>
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+          <button type="button" class="btn btn-secondary" onclick="CalibreApp.closeShelfDetail()" style="padding: 6px 10px;">
+            ← Retour
+          </button>
+          <div>
+            <h2 id="shelf-detail-title" style="font-size: 1.15rem;"></h2>
+            <p id="shelf-detail-desc" style="font-size: 0.85rem; color: var(--text-muted);"></p>
+          </div>
+        </div>
+        <div id="shelf-books-container" class="view-mode-grid"></div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Authors -->
     <section id="section-authors" class="tab-section">
-      <h2 style="font-size: 1.15rem; margin-bottom: 12px;">Tous les auteurs</h2>
-      <div id="authors-list-container" class="list-container"></div>
+      <div id="authors-main-view">
+        <h2 style="font-size: 1.15rem; margin-bottom: 12px;">Tous les auteurs</h2>
+        <div id="authors-list-container" class="list-container"></div>
+      </div>
+
+      <!-- Author Detail View -->
+      <div id="author-detail-view" hidden>
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+          <button type="button" class="btn btn-secondary" onclick="CalibreApp.closeAuthorDetail()" style="padding: 6px 10px;">
+            ← Retour
+          </button>
+          <div>
+            <h2 id="author-detail-name" style="font-size: 1.15rem;"></h2>
+            <p id="author-detail-count" style="font-size: 0.85rem; color: var(--accent-text); font-weight: 600;"></p>
+          </div>
+        </div>
+        <div id="author-books-container" class="view-mode-grid"></div>
+      </div>
     </section>
 
-    <!-- Tab 3: Series -->
+    <!-- Tab 4: Series -->
     <section id="section-series" class="tab-section">
-      <h2 style="font-size: 1.15rem; margin-bottom: 12px;">Toutes les séries</h2>
-      <div id="series-list-container" class="list-container"></div>
+      <div id="series-main-view">
+        <h2 style="font-size: 1.15rem; margin-bottom: 12px;">Toutes les séries</h2>
+        <div id="series-list-container" class="list-container"></div>
+      </div>
+
+      <!-- Series Detail View -->
+      <div id="series-detail-view" hidden>
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+          <button type="button" class="btn btn-secondary" onclick="CalibreApp.closeSeriesDetail()" style="padding: 6px 10px;">
+            ← Retour
+          </button>
+          <div>
+            <h2 id="series-detail-name" style="font-size: 1.15rem;"></h2>
+            <p id="series-detail-count" style="font-size: 0.85rem; color: var(--accent-text); font-weight: 600;"></p>
+          </div>
+        </div>
+        <div id="series-books-container" class="view-mode-grid"></div>
+      </div>
     </section>
 
-    <!-- Tab 4: Tags -->
-    <section id="section-tags" class="tab-section">
-      <h2 style="font-size: 1.15rem; margin-bottom: 12px;">Genres & Étiquettes</h2>
-      <div id="tags-list-container" class="list-container"></div>
-    </section>
-
-    <!-- Tab 5: Settings / Database -->
+    <!-- Tab 5: Settings / Database / Local Folder -->
     <section id="section-settings" class="tab-section">
-      <h2 style="font-size: 1.15rem; margin-bottom: 16px;">Gestion de la Bibliothèque</h2>
+      <h2 style="font-size: 1.15rem; margin-bottom: 16px;">Paramètres & Bibliothèque</h2>
 
       <!-- Stats Grid -->
       <div id="stats-summary" class="stats-grid"></div>
 
-      <!-- Database Actions -->
-      <div class="settings-section">
-        <h3>🗄️ Base de données metadata.db</h3>
-        <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 14px;">
-          Chargez votre base de données Calibre SQLite pour naviguer dans l'intégralité de vos livres sans connexion Internet.
+      <!-- 1. Dedicated Local EPUB Directory Configuration Card -->
+      <div id="local-dir-card" class="local-dir-card">
+        <div class="dir-header">
+          <div class="dir-title">📁 Répertoire local des livres (EPUB)</div>
+          <span id="dir-status-badge" class="status-badge badge-warning">Non configuré</span>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">
+          Définissez le dossier local sur votre smartphone ou PC contenant vos livres EPUB et leurs couvertures. L'application lira directement les fichiers depuis ce dossier.
         </p>
 
-        <!-- Hidden inputs -->
+        <div id="dir-path-display" class="dir-path-display">
+          Aucun répertoire local défini
+        </div>
+
+        <div class="dir-stats-row">
+          <span>Livres EPUB détectés : <strong id="dir-epubs-count">0</strong></span>
+        </div>
+
+        <!-- Hidden directory inputs -->
+        <input type="file" id="input-folder-fallback" webkitdirectory directory multiple style="display: none;">
+
+        <div class="settings-actions">
+          <button type="button" id="btn-define-local-dir" class="btn btn-primary">
+            📁 Choisir le dossier local (EPUBs)
+          </button>
+          <button type="button" id="btn-rescan-local-dir" class="btn btn-secondary" hidden>
+            🔄 Ré-indexer les fichiers
+          </button>
+          <button type="button" id="btn-disconnect-local-dir" class="btn btn-ghost" hidden>
+            ✕ Déconnecter
+          </button>
+        </div>
+      </div>
+
+      <!-- 2. Database Actions (metadata.db) -->
+      <div class="settings-section">
+        <h3>🗄️ Base de données metadata.db</h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 14px;">
+          Chargez votre catalogue Calibre SQLite pour naviguer dans l'intégralité de vos livres sans connexion Internet.
+        </p>
+
         <input type="file" id="input-file-db" accept=".db" style="display: none;">
-        <input type="file" id="input-folder" webkitdirectory directory multiple style="display: none;">
 
         <div class="settings-actions">
           <button type="button" class="btn btn-primary" onclick="document.getElementById('input-file-db').click()">
             🗄️ Charger metadata.db
-          </button>
-          <button type="button" id="btn-pick-folder" class="btn btn-secondary">
-            📁 Sélectionner le dossier Calibre
           </button>
           <button type="button" id="btn-load-demo" class="btn btn-ghost">
             🚀 Charger la base exemple
@@ -143,9 +265,9 @@
         </div>
       </div>
 
-      <!-- Storage Info -->
+      <!-- 3. Storage Info -->
       <div class="settings-section">
-        <h3>📊 Stockage local smartphone</h3>
+        <h3>📊 Stockage local & Cache</h3>
         <div id="storage-usage-info" style="font-size: 0.9rem; line-height: 1.8;">
           Calcul de l'espace...
         </div>
@@ -156,13 +278,12 @@
         </div>
       </div>
 
-      <!-- App Info -->
+      <!-- 4. NextGen Info -->
       <div class="settings-section">
-        <h3>📱 À propos</h3>
-        <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6;">
-          <strong>Calibre-Web PWA</strong> – Version JavaScript autonome.<br>
-          Moteur SQLite WebAssembly (sql.js) avec persistance IndexedDB.<br>
-          Lecteur EPUB intégré (epub.js), support PDF et partage vers applications Android.
+        <h3>📱 Calibre-Web NextGen</h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.6;">
+          Version PWA autonome reprenant l'architecture <strong>Calibre-Web NextGen ("caliBlur, elevated")</strong>.<br>
+          Lecture d'ebooks EPUB locale, étagères intelligentes, persistance IndexedDB et compatibilité Android PWA.
         </p>
       </div>
     </section>
@@ -171,9 +292,17 @@
 
   <!-- Mobile Bottom Navigation Bar -->
   <nav class="bottom-nav">
-    <button type="button" class="nav-tab active" data-tab="books">
+    <button type="button" class="nav-tab active" data-tab="home">
+      <span class="nav-tab-icon">🏠</span>
+      <span>Accueil</span>
+    </button>
+    <button type="button" class="nav-tab" data-tab="books">
       <span class="nav-tab-icon">📖</span>
       <span>Livres</span>
+    </button>
+    <button type="button" class="nav-tab" data-tab="shelves">
+      <span class="nav-tab-icon">📁</span>
+      <span>Étagères</span>
     </button>
     <button type="button" class="nav-tab" data-tab="authors">
       <span class="nav-tab-icon">👤</span>
@@ -182,10 +311,6 @@
     <button type="button" class="nav-tab" data-tab="series">
       <span class="nav-tab-icon">📚</span>
       <span>Séries</span>
-    </button>
-    <button type="button" class="nav-tab" data-tab="tags">
-      <span class="nav-tab-icon">🏷️</span>
-      <span>Tags</span>
     </button>
     <button type="button" class="nav-tab" data-tab="settings">
       <span class="nav-tab-icon">⚙️</span>
@@ -197,7 +322,7 @@
   <dialog id="book-detail-dialog" closedby="any" aria-labelledby="modal-book-title">
     <div class="modal-content-card">
       <div class="modal-header">
-        <span style="font-size: 0.8rem; font-weight: 700; color: var(--accent-color); text-transform: uppercase;">Détails du livre</span>
+        <span style="font-size: 0.8rem; font-weight: 700; color: var(--accent-text); text-transform: uppercase; letter-spacing: 1px;">Détails du livre</span>
         <button type="button" id="modal-close-btn" class="modal-close-btn" aria-label="Fermer">✕</button>
       </div>
 
@@ -214,6 +339,9 @@
             <strong>Série :</strong> <span id="modal-book-series"></span>
           </div>
 
+          <!-- Series Prev/Next Navigation Pill -->
+          <div id="modal-series-nav" class="series-nav-container" hidden></div>
+
           <div id="modal-rating-row" class="modal-meta-row" hidden>
             <strong>Note :</strong> <span id="modal-book-rating"></span>
           </div>
@@ -222,32 +350,42 @@
             <strong>Éditeur :</strong> <span id="modal-book-publisher"></span>
           </div>
 
+          <!-- Reading Status Selector -->
+          <div class="modal-meta-row" style="margin-top: 10px;">
+            <strong>Statut de lecture :</strong>
+            <select id="modal-reading-status-select" class="sort-select" style="margin-left: 8px;">
+              <option value="unread">⚪ Non lu</option>
+              <option value="reading">📖 En cours</option>
+              <option value="read">✓ Terminé</option>
+            </select>
+          </div>
+
           <div>
             <div id="modal-tags-container" class="modal-tags"></div>
           </div>
 
-          <div id="modal-file-status" class="status-missing" style="margin: 10px 0;"></div>
+          <div id="modal-file-status" class="status-missing" style="margin: 12px 0;"></div>
 
           <div class="modal-actions">
             <button type="button" id="modal-read-epub-btn" class="btn btn-primary" hidden>
               📖 Lire maintenant (EPUB)
             </button>
-            <button type="button" id="modal-read-pdf-btn" class="btn btn-primary" hidden>
-              📄 Ouvrir le PDF
-            </button>
             <button type="button" id="modal-share-btn" class="btn btn-secondary" hidden>
-              📲 Ouvrir dans Moon+ / ReadEra / Partager
+              📲 Partager / Ouvrir dans Moon+ / ReadEra
+            </button>
+            <button type="button" id="modal-add-shelf-btn" class="btn btn-secondary">
+              📁 Ajouter à une étagère...
             </button>
             <button type="button" class="btn btn-ghost" onclick="document.getElementById('input-associate-file').click()">
-              📎 Associer un fichier ebook (.epub, .pdf)
+              📎 Associer manuellement un fichier (.epub)
             </button>
             <input type="file" id="input-associate-file" accept=".epub,.pdf,.cbz,.txt" style="display: none;">
           </div>
         </div>
       </div>
 
-      <div style="margin-top: 18px;">
-        <h4 style="font-size: 0.9rem; margin-bottom: 6px;">Résumé / Description</h4>
+      <div style="margin-top: 20px;">
+        <h4 style="font-size: 0.9rem; margin-bottom: 6px; color: var(--text);">Résumé / Description</h4>
         <div id="modal-book-comment" class="modal-comment"></div>
       </div>
     </div>
@@ -256,7 +394,6 @@
   <!-- EPUB Reader Fullscreen Modal Dialog -->
   <dialog id="reader-dialog" closedby="any" aria-label="Lecteur EPUB">
     <div class="reader-container">
-      <!-- Reader Header -->
       <div class="reader-header">
         <button type="button" class="btn-icon" onclick="CalibreReader.toggleToc()" aria-label="Sommaire" title="Table des matières">
           📑
@@ -265,7 +402,7 @@
         <div class="reader-header-actions">
           <button type="button" class="btn-icon" onclick="CalibreReader.changeFontSize(-10)" aria-label="Diminuer la police" title="A-">A-</button>
           <button type="button" class="btn-icon" onclick="CalibreReader.changeFontSize(10)" aria-label="Agrandir la police" title="A+">A+</button>
-          <button type="button" class="btn-icon theme-btn" onclick="CalibreReader.setTheme('dark')" title="Sombre">🌙</button>
+          <button type="button" class="btn-icon theme-btn" onclick="CalibreReader.setTheme('dark')" title="NextGen CaliBlur">🌙</button>
           <button type="button" class="btn-icon theme-btn" onclick="CalibreReader.setTheme('sepia')" title="Sépia">📜</button>
           <button type="button" class="btn-icon theme-btn" onclick="CalibreReader.setTheme('light')" title="Clair">☀️</button>
           <button type="button" class="btn-icon" onclick="CalibreReader.toggleFullscreen()" aria-label="Plein écran" title="Plein écran">⛶</button>
@@ -273,7 +410,6 @@
         </div>
       </div>
 
-      <!-- TOC Drawer -->
       <aside id="reader-toc-drawer" class="reader-toc-drawer">
         <div class="reader-toc-header">
           <span>Table des matières</span>
@@ -282,14 +418,12 @@
         <ul id="reader-toc-list" class="reader-toc-list"></ul>
       </aside>
 
-      <!-- Viewer Area -->
       <div class="reader-main-area">
         <button type="button" class="reader-arrow reader-arrow-prev" onclick="CalibreReader.prev()" aria-label="Page précédente">‹</button>
         <div id="reader-viewer"></div>
         <button type="button" class="reader-arrow reader-arrow-next" onclick="CalibreReader.next()" aria-label="Page suivante">›</button>
       </div>
 
-      <!-- Reader Footer -->
       <div class="reader-footer">
         <div class="reader-progress-bar-container">
           <div id="reader-progress-bar" class="reader-progress-bar"></div>

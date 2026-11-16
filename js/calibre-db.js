@@ -1,6 +1,7 @@
 /**
- * Calibre-Web PWA - Calibre SQLite Engine & Library Manager
- * Powered by WebAssembly SQLite (sql.js) for high performance on mobile devices.
+ * Calibre-Web NextGen PWA - SQLite Engine & Local Filesystem Manager
+ * Supports WebAssembly SQLite, persistent Local Directory Handles (File System Access API),
+ * Calibre standard folder resolution, and NextGen Smart Shelves.
  */
 
 const CalibreDB = (function () {
@@ -10,12 +11,18 @@ const CalibreDB = (function () {
   let dbInstance = null;
   let dbName = 'metadata.db';
 
-  // In-memory map of local files when a Calibre folder is selected
-  // Key: normalized relative path (lowercase, forward slashes), Value: File or FileSystemFileHandle
-  const localFileMap = new Map();
-  let directoryHandle = null;
+  // Persistent Directory Handle (File System Access API)
+  let localDirectoryHandle = null;
+  let localDirectoryName = '';
+  let localDirectoryStatus = 'none'; // 'none' | 'connected' | 'needs_permission'
 
-  // Cache of generated object URLs to revoke them when unloading
+  // Fast in-memory index of files found in the local directory
+  // Key: normalized relative path or filename (lowercase), Value: File or FileSystemFileHandle
+  const localFileMap = new Map();
+  const epubIndex = new Map(); // filename (lowercase) -> handle/file
+  const coverIndex = new Map(); // bookPath/cover -> handle/file
+
+  // Cache of created object URLs to release on unload
   const createdObjectUrls = new Set();
 
   /**
@@ -35,17 +42,17 @@ const CalibreDB = (function () {
   }
 
   /**
-   * Normalize file paths for directory lookup
+   * Normalize path for file resolution
    */
   function normalizePath(p) {
     if (!p) return '';
-    return p.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+    return p.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '').toLowerCase();
   }
 
   /**
-   * Generate an SVG data URI cover with tasteful book typography
+   * Generate NextGen elevated SVG Book Cover
    */
-  function generateSvgCover(title, author, bookId = 0) {
+  function generateNextGenCover(title, author, bookId = 0) {
     const safeTitle = (title || 'Sans Titre')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -55,27 +62,24 @@ const CalibreDB = (function () {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
 
-    // Color palettes based on book ID
+    // NextGen elevated caliBlur palettes
     const palettes = [
-      { bg1: '#1e3c72', bg2: '#2a5298', accent: '#f39c12' }, // Navy
-      { bg1: '#3a1c71', bg2: '#d76d77', accent: '#ffaf7b' }, // Purple-coral
-      { bg1: '#134e5e', bg2: '#71b280', accent: '#2ecc71' }, // Emerald
-      { bg1: '#4b134f', bg2: '#c94b4b', accent: '#f1c40f' }, // Burgundy
-      { bg1: '#2c3e50', bg2: '#3498db', accent: '#e74c3c' }, // Slate & blue
-      { bg1: '#1f1c18', bg2: '#8e0e00', accent: '#e67e22' }, // Dark ruby
-      { bg1: '#0f2027', bg2: '#203a43', accent: '#00adb5' }  // Teal night
+      { bg1: '#141c24', bg2: '#1b2530', accent: '#cc7b19', accentLight: '#e6a13f' }, // CaliBlur signature amber
+      { bg1: '#16222f', bg2: '#203345', accent: '#3b82f6', accentLight: '#60a5fa' }, // Deep Blue
+      { bg1: '#1a221b', bg2: '#223326', accent: '#10b981', accentLight: '#34d399' }, // Forest Emerald
+      { bg1: '#261723', bg2: '#381f33', accent: '#d946ef', accentLight: '#f472b6' }, // Velvet Plum
+      { bg1: '#241a15', bg2: '#36241c', accent: '#f97316', accentLight: '#fb923c' }, // Warm Rust
+      { bg1: '#151f28', bg2: '#1d2c3a', accent: '#06b6d4', accentLight: '#22d3ee' }  // Nordic Teal
     ];
 
     const idx = Math.abs(Number(bookId) || 0) % palettes.length;
     const p = palettes[idx];
 
-    // Truncate title nicely for SVG display
     let displayTitle = safeTitle;
     if (displayTitle.length > 55) {
       displayTitle = displayTitle.substring(0, 52) + '...';
     }
 
-    // Split title into 2-3 lines if long
     const words = displayTitle.split(' ');
     const lines = [];
     let curLine = '';
@@ -91,87 +95,322 @@ const CalibreDB = (function () {
     if (curLine && lines.length < 3) lines.push(curLine.trim());
 
     const titleSpans = lines.map((line, i) => {
-      const y = 200 + (i * 26);
+      const y = 195 + (i * 26);
       return `<tspan x="150" y="${y}">${line}</tspan>`;
     }).join('');
 
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 450" width="100%" height="100%">
         <defs>
-          <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stop-color="${p.bg1}" />
-            <stop offset="100%" stop-color="${p.bg2}" />
+            <stop offset="50%" stop-color="${p.bg2}" />
+            <stop offset="100%" stop-color="${p.bg1}" />
           </linearGradient>
-          <linearGradient id="spine" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="rgba(0,0,0,0.5)" />
-            <stop offset="4%" stop-color="rgba(255,255,255,0.2)" />
-            <stop offset="8%" stop-color="rgba(0,0,0,0.3)" />
+          <linearGradient id="spineEffect" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="rgba(0,0,0,0.6)" />
+            <stop offset="3%" stop-color="rgba(255,255,255,0.18)" />
+            <stop offset="7%" stop-color="rgba(0,0,0,0.35)" />
             <stop offset="12%" stop-color="rgba(0,0,0,0)" />
           </linearGradient>
-          <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
-            <feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity="0.3"/>
+          <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
+            <feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity="0.4" />
           </filter>
         </defs>
 
-        <!-- Book background -->
-        <rect width="300" height="450" rx="6" fill="url(#grad)" />
+        <!-- Base -->
+        <rect width="300" height="450" rx="8" fill="url(#bgGrad)" />
 
-        <!-- Border frame -->
-        <rect x="18" y="18" width="264" height="414" rx="3" fill="none" stroke="${p.accent}" stroke-width="1.5" stroke-opacity="0.6" />
-        <rect x="23" y="23" width="254" height="404" rx="2" fill="none" stroke="${p.accent}" stroke-width="0.7" stroke-opacity="0.3" />
+        <!-- Double border -->
+        <rect x="16" y="16" width="268" height="418" rx="5" fill="none" stroke="${p.accent}" stroke-width="1.2" stroke-opacity="0.4" />
+        <rect x="22" y="22" width="256" height="406" rx="3" fill="none" stroke="${p.accent}" stroke-width="0.6" stroke-opacity="0.25" />
 
-        <!-- Header / Genre ornament -->
-        <circle cx="150" cy="70" r="16" fill="none" stroke="${p.accent}" stroke-width="1.2" stroke-opacity="0.8"/>
-        <path d="M 144 70 L 156 70 M 150 64 L 150 76" stroke="${p.accent}" stroke-width="1.2" stroke-opacity="0.8"/>
+        <!-- NextGen Book Emblem -->
+        <g transform="translate(150, 75)" opacity="0.85">
+          <circle cx="0" cy="0" r="18" fill="none" stroke="${p.accent}" stroke-width="1.2" />
+          <path d="M -8 -4 C -4 -7 0 -7 0 6 C 0 -7 4 -7 8 -4 L 8 4 C 4 1 0 1 0 14 C 0 1 -4 1 -8 4 Z" fill="${p.accentLight}" opacity="0.9"/>
+        </g>
 
         <!-- Title -->
-        <text text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" font-size="20" fill="#ffffff" filter="url(#shadow)">
+        <text text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" font-size="20" fill="#ece8e1" filter="url(#cardShadow)">
           ${titleSpans}
         </text>
 
-        <!-- Divider -->
-        <line x1="80" y1="310" x2="220" y2="310" stroke="${p.accent}" stroke-width="1" stroke-opacity="0.7" />
+        <!-- Separator -->
+        <line x1="85" y1="315" x2="215" y2="315" stroke="${p.accent}" stroke-width="1.2" stroke-opacity="0.6" />
 
         <!-- Author -->
-        <text x="150" y="345" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="400" font-size="14" fill="#f0f0f0" letter-spacing="1">
-          ${safeAuthor.length > 30 ? safeAuthor.substring(0, 28) + '...' : safeAuthor}
+        <text x="150" y="348" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="500" font-size="14" fill="#9aa7b2" letter-spacing="0.5">
+          ${safeAuthor.length > 32 ? safeAuthor.substring(0, 30) + '...' : safeAuthor}
         </text>
 
-        <!-- Calibre logo footer -->
-        <text x="150" y="405" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="rgba(255,255,255,0.4)" letter-spacing="2">
-          CALIBRE-WEB
+        <!-- Calibre NextGen Badge -->
+        <text x="150" y="410" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" font-weight="600" fill="${p.accent}" letter-spacing="2" opacity="0.7">
+          CALIBRE-WEB NEXTGEN
         </text>
 
-        <!-- Book Spine 3D effect -->
-        <rect width="300" height="450" fill="url(#spine)" pointer-events="none" />
+        <!-- 3D Spine overlay -->
+        <rect width="300" height="450" rx="8" fill="url(#spineEffect)" pointer-events="none" />
       </svg>
     `.trim();
 
     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
   }
 
+  /**
+   * Helper to resolve a file inside a DirectoryHandle given a relative path like "Author/Book (1)/file.epub"
+   */
+  async function resolveFileInHandle(dirHandle, relPath) {
+    if (!dirHandle || !relPath) return null;
+    const parts = relPath.replace(/\\/g, '/').split('/').filter(Boolean);
+    if (!parts.length) return null;
+
+    let current = dirHandle;
+    for (let i = 0; i < parts.length - 1; i++) {
+      try {
+        current = await current.getDirectoryHandle(parts[i]);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    try {
+      const fileName = parts[parts.length - 1];
+      const fileHandle = await current.getFileHandle(fileName);
+      return await fileHandle.getFile();
+    } catch (e) {
+      return null;
+    }
+  }
+
   return {
     /**
-     * Initialize engine and try loading database from IndexedDB
+     * Initialize CalibreDB engine and restore saved local directory and database
      */
     async init() {
       await initEngine();
 
-      // Check if metadata.db already stored in IndexedDB
+      // 1. Try restoring saved DirectoryHandle from IndexedDB
+      await this.restoreSavedDirectoryHandle();
+
+      // 2. Try loading metadata.db from IndexedDB
       const saved = await CalibreStorage.getMetadataDB();
       if (saved && saved.data) {
         try {
           this.loadFromArrayBuffer(saved.data, saved.name || 'metadata.db');
-          return { loaded: true, name: saved.name, size: saved.size };
+          return {
+            loaded: true,
+            name: saved.name,
+            size: saved.size,
+            directoryStatus: localDirectoryStatus,
+            directoryName: localDirectoryName
+          };
         } catch (err) {
           console.warn('Erreur lors du chargement de la base enregistrée:', err);
         }
       }
-      return { loaded: false };
+
+      return {
+        loaded: false,
+        directoryStatus: localDirectoryStatus,
+        directoryName: localDirectoryName
+      };
     },
 
     /**
-     * Load database from ArrayBuffer or Uint8Array
+     * Restore saved DirectoryHandle from storage
+     */
+    async restoreSavedDirectoryHandle() {
+      if (!('showDirectoryPicker' in window)) {
+        return;
+      }
+
+      try {
+        const saved = await CalibreStorage.getDirectoryHandle();
+        if (saved && saved.handle) {
+          localDirectoryHandle = saved.handle;
+          localDirectoryName = saved.name || localDirectoryHandle.name || 'Dossier Calibre';
+
+          // Check permissions
+          const perm = await localDirectoryHandle.queryPermission({ mode: 'read' });
+          if (perm === 'granted') {
+            localDirectoryStatus = 'connected';
+            // Index directory in background
+            this.scanDirectoryHandle(localDirectoryHandle).catch(console.warn);
+          } else {
+            localDirectoryStatus = 'needs_permission';
+          }
+        }
+      } catch (err) {
+        console.warn('Erreur restauration DirectoryHandle:', err);
+      }
+    },
+
+    /**
+     * Request re-granting permission on the saved DirectoryHandle
+     */
+    async requestDirectoryPermission() {
+      if (!localDirectoryHandle) return false;
+      try {
+        const perm = await localDirectoryHandle.requestPermission({ mode: 'read' });
+        if (perm === 'granted') {
+          localDirectoryStatus = 'connected';
+          await this.scanDirectoryHandle(localDirectoryHandle);
+          return true;
+        }
+      } catch (e) {
+        console.warn('Permission refusée:', e);
+      }
+      return false;
+    },
+
+    /**
+     * Set a new local directory handle and persist it
+     */
+    async setLocalDirectoryHandle(dirHandle) {
+      localDirectoryHandle = dirHandle;
+      localDirectoryName = dirHandle.name;
+      localDirectoryStatus = 'connected';
+
+      // Persist in IndexedDB
+      await CalibreStorage.saveDirectoryHandle(dirHandle);
+
+      // Scan directory and build fast indexes
+      await this.scanDirectoryHandle(dirHandle);
+
+      // If metadata.db is in the directory, load and persist it!
+      const dbFile = await this.findMetadataDbInMap();
+      if (dbFile) {
+        this.loadFromArrayBuffer(dbFile.buffer, 'metadata.db');
+        await CalibreStorage.saveMetadataDB(dbFile.buffer, 'metadata.db');
+      }
+
+      return {
+        name: localDirectoryName,
+        filesIndexed: localFileMap.size,
+        epubsCount: epubIndex.size,
+        hasMetadataDb: dbFile !== null
+      };
+    },
+
+    /**
+     * Remove the local directory connection
+     */
+    async removeLocalDirectory() {
+      localDirectoryHandle = null;
+      localDirectoryName = '';
+      localDirectoryStatus = 'none';
+      localFileMap.clear();
+      epubIndex.clear();
+      coverIndex.clear();
+      await CalibreStorage.removeDirectoryHandle();
+    },
+
+    getLocalDirectoryInfo() {
+      return {
+        handle: localDirectoryHandle,
+        name: localDirectoryName,
+        status: localDirectoryStatus,
+        filesCount: localFileMap.size,
+        epubsCount: epubIndex.size
+      };
+    },
+
+    /**
+     * Scan directory handle recursively and build fast lookup indices
+     */
+    async scanDirectoryHandle(dirHandle) {
+      localFileMap.clear();
+      epubIndex.clear();
+      coverIndex.clear();
+
+      async function walk(currentHandle, currentPath = '') {
+        for await (const entry of currentHandle.values()) {
+          const entryPath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
+          const normPath = normalizePath(entryPath);
+          const normName = normalizePath(entry.name);
+
+          if (entry.kind === 'file') {
+            localFileMap.set(normPath, entry);
+            localFileMap.set(normName, entry);
+
+            // Index EPUBs
+            if (normName.endsWith('.epub')) {
+              epubIndex.set(normName, entry);
+              epubIndex.set(normPath, entry);
+            }
+            // Index covers
+            if (normName === 'cover.jpg' || normName === 'cover.jpeg' || normName === 'cover.png') {
+              coverIndex.set(normPath, entry);
+            }
+          } else if (entry.kind === 'directory') {
+            await walk(entry, entryPath);
+          }
+        }
+      }
+
+      await walk(dirHandle);
+    },
+
+    /**
+     * Register fallback file list (e.g. from webkitdirectory input)
+     */
+    registerFileList(files) {
+      localFileMap.clear();
+      epubIndex.clear();
+      coverIndex.clear();
+
+      for (const file of files) {
+        const relPath = file.webkitRelativePath || file.name;
+        let cleanPath = normalizePath(relPath);
+        const parts = cleanPath.split('/');
+        if (parts.length > 1) {
+          parts.shift(); // remove root folder name
+          cleanPath = parts.join('/');
+        }
+        const normName = normalizePath(file.name);
+
+        localFileMap.set(cleanPath, file);
+        localFileMap.set(normName, file);
+
+        if (normName.endsWith('.epub')) {
+          epubIndex.set(normName, file);
+          epubIndex.set(cleanPath, file);
+        }
+        if (normName === 'cover.jpg' || normName === 'cover.jpeg' || normName === 'cover.png') {
+          coverIndex.set(cleanPath, file);
+        }
+      }
+
+      if (files.length > 0 && files[0].webkitRelativePath) {
+        localDirectoryName = files[0].webkitRelativePath.split('/')[0];
+        localDirectoryStatus = 'connected';
+      }
+
+      return {
+        filesCount: localFileMap.size,
+        epubsCount: epubIndex.size
+      };
+    },
+
+    /**
+     * Find metadata.db inside local files
+     */
+    async findMetadataDbInMap() {
+      const match = localFileMap.get('metadata.db');
+      if (match) {
+        let fileObj = match;
+        if (typeof match.getFile === 'function') {
+          fileObj = await match.getFile();
+        }
+        const buf = await fileObj.arrayBuffer();
+        return { buffer: buf, file: fileObj };
+      }
+      return null;
+    },
+
+    /**
+     * Load database from ArrayBuffer / Uint8Array
      */
     loadFromArrayBuffer(buffer, filename = 'metadata.db') {
       if (!sqlEngine) {
@@ -187,9 +426,6 @@ const CalibreDB = (function () {
       return true;
     },
 
-    /**
-     * Check if a database is actively loaded
-     */
     isLoaded() {
       return dbInstance !== null;
     },
@@ -198,23 +434,18 @@ const CalibreDB = (function () {
       return dbName;
     },
 
-    /**
-     * Close the database instance
-     */
     close() {
       if (dbInstance) {
         try { dbInstance.close(); } catch (e) {}
         dbInstance = null;
       }
       localFileMap.clear();
-      directoryHandle = null;
+      epubIndex.clear();
+      coverIndex.clear();
       createdObjectUrls.forEach((url) => URL.revokeObjectURL(url));
       createdObjectUrls.clear();
     },
 
-    /**
-     * Export database as Uint8Array
-     */
     export() {
       if (!dbInstance) throw new Error('Aucune base chargée.');
       return dbInstance.export();
@@ -247,7 +478,9 @@ const CalibreDB = (function () {
           tags: countTags,
           formats: formats,
           localFilesMapped: localFileMap.size,
-          hasDirectory: directoryHandle !== null
+          epubsMapped: epubIndex.size,
+          hasDirectory: localDirectoryStatus === 'connected',
+          directoryName: localDirectoryName
         };
       } catch (e) {
         console.error('Erreur getStats:', e);
@@ -256,7 +489,7 @@ const CalibreDB = (function () {
     },
 
     /**
-     * Query books with filters, sorting, and pagination
+     * Query books with pagination, sorting, and filters
      */
     getBooks(options = {}) {
       if (!dbInstance) return { total: 0, books: [] };
@@ -275,32 +508,27 @@ const CalibreDB = (function () {
       const whereClauses = [];
       const params = [];
 
-      // Search term (by title or author_sort)
       if (search && search.trim()) {
         const s = '%' + search.trim() + '%';
         whereClauses.push('(b.title LIKE ? OR b.author_sort LIKE ?)');
         params.push(s, s);
       }
 
-      // Filter by Author
       if (authorId) {
         whereClauses.push('EXISTS (SELECT 1 FROM books_authors_link bal WHERE bal.book = b.id AND bal.author = ?)');
         params.push(Number(authorId));
       }
 
-      // Filter by Series
       if (seriesId) {
         whereClauses.push('EXISTS (SELECT 1 FROM books_series_link bsl WHERE bsl.book = b.id AND bsl.series = ?)');
         params.push(Number(seriesId));
       }
 
-      // Filter by Tag
       if (tagId) {
         whereClauses.push('EXISTS (SELECT 1 FROM books_tags_link btl WHERE btl.book = b.id AND btl.tag = ?)');
         params.push(Number(tagId));
       }
 
-      // Filter by Format
       if (format) {
         whereClauses.push('EXISTS (SELECT 1 FROM data d WHERE d.book = b.id AND UPPER(d.format) = ?)');
         params.push(String(format).toUpperCase());
@@ -308,7 +536,6 @@ const CalibreDB = (function () {
 
       const whereSql = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
 
-      // Sorting
       let orderSql = 'ORDER BY b.timestamp DESC, b.id DESC';
       switch (sortBy) {
         case 'title_asc':
@@ -326,17 +553,18 @@ const CalibreDB = (function () {
         case 'rating_desc':
           orderSql = 'ORDER BY rating DESC, b.id DESC';
           break;
+        case 'random':
+          orderSql = 'ORDER BY RANDOM()';
+          break;
         case 'id_desc':
         default:
           orderSql = 'ORDER BY b.timestamp DESC, b.id DESC';
           break;
       }
 
-      // 1. Get total count
-      const countQuery = `SELECT COUNT(*) FROM books b ${whereSql}`;
       let total = 0;
       try {
-        const countRes = dbInstance.exec(countQuery, params);
+        const countRes = dbInstance.exec(`SELECT COUNT(*) FROM books b ${whereSql}`, params);
         total = countRes[0]?.values[0][0] || 0;
       } catch (err) {
         console.error('Erreur countQuery:', err);
@@ -346,7 +574,6 @@ const CalibreDB = (function () {
         return { total: 0, books: [] };
       }
 
-      // 2. Fetch books with subqueries for fast execution on large databases
       const dataQuery = `
         SELECT
           b.id,
@@ -368,11 +595,9 @@ const CalibreDB = (function () {
         LIMIT ? OFFSET ?
       `;
 
-      const queryParams = [...params, limit, offset];
       let books = [];
-
       try {
-        const res = dbInstance.exec(dataQuery, queryParams);
+        const res = dbInstance.exec(dataQuery, [...params, limit, offset]);
         if (res.length > 0) {
           const cols = res[0].columns;
           books = res[0].values.map((row) => {
@@ -403,13 +628,12 @@ const CalibreDB = (function () {
     },
 
     /**
-     * Get complete book details including synopsis, tags, files, identifiers
+     * Get complete book details
      */
     getBookDetails(bookId) {
       if (!dbInstance) return null;
       const id = Number(bookId);
 
-      // Book record
       const bRes = dbInstance.exec('SELECT * FROM books WHERE id = ?', [id]);
       if (!bRes.length || !bRes[0].values.length) return null;
 
@@ -488,7 +712,7 @@ const CalibreDB = (function () {
         }
       } catch (e) {}
 
-      // Comments / Description
+      // Comments / Synopsis
       let comment = '';
       try {
         const cRes = dbInstance.exec('SELECT text FROM comments WHERE book = ?', [id]);
@@ -497,7 +721,7 @@ const CalibreDB = (function () {
         }
       } catch (e) {}
 
-      // Formats / Files
+      // Data files
       let dataFiles = [];
       try {
         const dRes = dbInstance.exec('SELECT id, format, uncompressed_size, name FROM data WHERE book = ?', [id]);
@@ -511,7 +735,7 @@ const CalibreDB = (function () {
         }
       } catch (e) {}
 
-      // Identifiers (ISBN, etc.)
+      // Identifiers
       let identifiers = [];
       try {
         const iRes = dbInstance.exec('SELECT type, val FROM identifiers WHERE book = ?', [id]);
@@ -519,6 +743,31 @@ const CalibreDB = (function () {
           identifiers = iRes[0].values.map(([type, val]) => ({ type, val }));
         }
       } catch (e) {}
+
+      // Next / Previous books in series if in a series
+      let seriesNavigation = null;
+      if (series.length > 0) {
+        const sId = series[0].id;
+        try {
+          const navRes = dbInstance.exec(`
+            SELECT b.id, b.title, b.series_index
+            FROM books b
+            JOIN books_series_link bsl ON b.id = bsl.book
+            WHERE bsl.series = ?
+            ORDER BY b.series_index ASC
+          `, [sId]);
+          if (navRes.length && navRes[0].values.length > 1) {
+            const list = navRes[0].values.map(([bid, title, sidx]) => ({ id: bid, title, index: sidx }));
+            const currentPos = list.findIndex((item) => item.id === id);
+            seriesNavigation = {
+              seriesName: series[0].name,
+              prev: currentPos > 0 ? list[currentPos - 1] : null,
+              next: currentPos < list.length - 1 ? list[currentPos + 1] : null,
+              all: list
+            };
+          }
+        } catch (e) {}
+      }
 
       return {
         id: book.id,
@@ -528,6 +777,7 @@ const CalibreDB = (function () {
         authors,
         series,
         series_index: book.series_index || 1.0,
+        seriesNavigation,
         tags,
         rating,
         publishers,
@@ -543,7 +793,215 @@ const CalibreDB = (function () {
     },
 
     /**
-     * Get list of authors with book counts
+     * NextGen Smart Shelves (Magic Shelves)
+     */
+    async getMagicShelfBooks(shelfType, limit = 18) {
+      if (!dbInstance) return [];
+
+      switch (shelfType) {
+        case 'recently_added':
+          return this.getBooks({ sortBy: 'timestamp_desc', limit }).books;
+
+        case 'top_rated':
+          return this.getBooks({ sortBy: 'rating_desc', limit }).books;
+
+        case 'random':
+          return this.getBooks({ sortBy: 'random', limit }).books;
+
+        case 'continue_reading': {
+          // Read from IndexedDB reading_status & reading_progress
+          const progressList = await CalibreStorage.getAllProgress();
+          if (!progressList.length) return [];
+
+          // Sort by last updated
+          progressList.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+          const bookIds = progressList
+            .filter((p) => p.percentage > 0 && p.percentage < 95)
+            .slice(0, limit)
+            .map((p) => p.bookId);
+
+          return this.getBooksByIds(bookIds);
+        }
+
+        case 'finished': {
+          const progressList = await CalibreStorage.getAllProgress();
+          const finishedIds = progressList
+            .filter((p) => p.percentage >= 95)
+            .slice(0, limit)
+            .map((p) => p.bookId);
+
+          return this.getBooksByIds(finishedIds);
+        }
+
+        default:
+          return [];
+      }
+    },
+
+    /**
+     * Get books by an array of IDs (preserving order)
+     */
+    getBooksByIds(bookIds) {
+      if (!dbInstance || !bookIds || !bookIds.length) return [];
+      const placeholders = bookIds.map(() => '?').join(',');
+
+      const q = `
+        SELECT
+          b.id,
+          b.title,
+          b.sort,
+          b.author_sort,
+          b.path,
+          b.has_cover,
+          b.series_index,
+          b.pubdate,
+          b.timestamp,
+          (SELECT GROUP_CONCAT(a.name, ', ') FROM books_authors_link bal JOIN authors a ON bal.author = a.id WHERE bal.book = b.id) AS authors,
+          (SELECT GROUP_CONCAT(s.name, ', ') FROM books_series_link bsl JOIN series s ON bsl.series = s.id WHERE bsl.book = b.id) AS series,
+          (SELECT GROUP_CONCAT(d.format, ', ') FROM data d WHERE d.book = b.id) AS formats,
+          (SELECT r.rating FROM books_ratings_link brl JOIN ratings r ON brl.rating = r.id WHERE brl.book = b.id LIMIT 1) AS rating
+        FROM books b
+        WHERE b.id IN (${placeholders})
+      `;
+
+      try {
+        const res = dbInstance.exec(q, bookIds);
+        if (!res.length) return [];
+        const cols = res[0].columns;
+        const map = new Map();
+
+        res[0].values.forEach((row) => {
+          const b = {};
+          cols.forEach((c, i) => { b[c] = row[i]; });
+          map.set(b.id, {
+            id: b.id,
+            title: b.title || 'Sans titre',
+            sort: b.sort,
+            author_sort: b.author_sort,
+            authors: b.authors || b.author_sort || 'Auteur inconnu',
+            series: b.series || null,
+            series_index: b.series_index || 1.0,
+            path: b.path,
+            has_cover: Boolean(b.has_cover),
+            pubdate: b.pubdate,
+            timestamp: b.timestamp,
+            formats: b.formats ? b.formats.split(',').map((f) => f.trim()) : [],
+            rating: b.rating ? Number(b.rating) : 0
+          });
+        });
+
+        // Return in requested order
+        return bookIds.map((id) => map.get(id)).filter(Boolean);
+      } catch (err) {
+        console.error('Erreur getBooksByIds:', err);
+        return [];
+      }
+    },
+
+    /**
+     * Author details and related books
+     */
+    getAuthorDetails(authorId) {
+      if (!dbInstance) return null;
+      const id = Number(authorId);
+
+      const aRes = dbInstance.exec('SELECT id, name, sort, link FROM authors WHERE id = ?', [id]);
+      if (!aRes.length || !aRes[0].values.length) return null;
+
+      const [aid, name, sort, link] = aRes[0].values[0];
+      const booksRes = this.getBooks({ authorId: id, limit: 200 });
+
+      // Find series by this author
+      const seriesRes = dbInstance.exec(`
+        SELECT DISTINCT s.id, s.name, COUNT(bsl.book) as count
+        FROM series s
+        JOIN books_series_link bsl ON s.id = bsl.series
+        JOIN books_authors_link bal ON bsl.book = bal.book
+        WHERE bal.author = ?
+        GROUP BY s.id
+        ORDER BY s.name ASC
+      `, [id]);
+
+      let series = [];
+      if (seriesRes.length) {
+        series = seriesRes[0].values.map(([sid, sname, count]) => ({ id: sid, name: sname, book_count: count }));
+      }
+
+      return {
+        id: aid,
+        name,
+        sort,
+        link,
+        totalBooks: booksRes.total,
+        books: booksRes.books,
+        series
+      };
+    },
+
+    /**
+     * Series details and books in order
+     */
+    getSeriesDetails(seriesId) {
+      if (!dbInstance) return null;
+      const id = Number(seriesId);
+
+      const sRes = dbInstance.exec('SELECT id, name, sort FROM series WHERE id = ?', [id]);
+      if (!sRes.length || !sRes[0].values.length) return null;
+
+      const [sid, name, sort] = sRes[0].values[0];
+
+      // Fetch all books in series sorted by series_index
+      const q = `
+        SELECT
+          b.id,
+          b.title,
+          b.sort,
+          b.author_sort,
+          b.path,
+          b.has_cover,
+          b.series_index,
+          b.pubdate,
+          (SELECT GROUP_CONCAT(a.name, ', ') FROM books_authors_link bal JOIN authors a ON bal.author = a.id WHERE bal.book = b.id) AS authors,
+          (SELECT GROUP_CONCAT(d.format, ', ') FROM data d WHERE d.book = b.id) AS formats,
+          (SELECT r.rating FROM books_ratings_link brl JOIN ratings r ON brl.rating = r.id WHERE brl.book = b.id LIMIT 1) AS rating
+        FROM books b
+        JOIN books_series_link bsl ON b.id = bsl.book
+        WHERE bsl.series = ?
+        ORDER BY b.series_index ASC
+      `;
+
+      let books = [];
+      try {
+        const bRes = dbInstance.exec(q, [id]);
+        if (bRes.length) {
+          const cols = bRes[0].columns;
+          books = bRes[0].values.map((row) => {
+            const b = {};
+            cols.forEach((c, i) => { b[c] = row[i]; });
+            return {
+              id: b.id,
+              title: b.title,
+              authors: b.authors || b.author_sort || '',
+              series: name,
+              series_index: b.series_index,
+              formats: b.formats ? b.formats.split(',').map((f) => f.trim()) : [],
+              rating: b.rating ? Number(b.rating) : 0
+            };
+          });
+        }
+      } catch (e) {}
+
+      return {
+        id: sid,
+        name,
+        sort,
+        totalBooks: books.length,
+        books
+      };
+    },
+
+    /**
+     * Authors list
      */
     getAuthors(options = {}) {
       if (!dbInstance) return [];
@@ -565,20 +1023,17 @@ const CalibreDB = (function () {
         ORDER BY book_count DESC, a.sort COLLATE NOCASE ASC
         LIMIT ? OFFSET ?
       `;
-      params.push(limit, offset);
-
       try {
-        const res = dbInstance.exec(q, params);
+        const res = dbInstance.exec(q, [...params, limit, offset]);
         if (!res.length) return [];
         return res[0].values.map(([id, name, sort, count]) => ({ id, name, sort, book_count: count }));
       } catch (e) {
-        console.error('Erreur getAuthors:', e);
         return [];
       }
     },
 
     /**
-     * Get list of series with book counts
+     * Series list
      */
     getSeries(options = {}) {
       if (!dbInstance) return [];
@@ -600,20 +1055,17 @@ const CalibreDB = (function () {
         ORDER BY book_count DESC, s.sort COLLATE NOCASE ASC
         LIMIT ? OFFSET ?
       `;
-      params.push(limit, offset);
-
       try {
-        const res = dbInstance.exec(q, params);
+        const res = dbInstance.exec(q, [...params, limit, offset]);
         if (!res.length) return [];
         return res[0].values.map(([id, name, sort, count]) => ({ id, name, sort, book_count: count }));
       } catch (e) {
-        console.error('Erreur getSeries:', e);
         return [];
       }
     },
 
     /**
-     * Get list of tags with book counts
+     * Tags list
      */
     getTags(options = {}) {
       if (!dbInstance) return [];
@@ -635,74 +1087,23 @@ const CalibreDB = (function () {
         ORDER BY book_count DESC, t.name COLLATE NOCASE ASC
         LIMIT ? OFFSET ?
       `;
-      params.push(limit, offset);
-
       try {
-        const res = dbInstance.exec(q, params);
+        const res = dbInstance.exec(q, [...params, limit, offset]);
         if (!res.length) return [];
         return res[0].values.map(([id, name, count]) => ({ id, name, book_count: count }));
       } catch (e) {
-        console.error('Erreur getTags:', e);
         return [];
       }
     },
 
     /**
-     * Register local file list (e.g. from webkitdirectory or file input)
-     */
-    registerFileList(files) {
-      localFileMap.clear();
-      for (const file of files) {
-        const relPath = file.webkitRelativePath || file.name;
-        // Normalize relative path: remove root directory name if present
-        let cleanPath = normalizePath(relPath);
-        // If webkitRelativePath starts with "calibre_dir/...", strip top dir
-        const parts = cleanPath.split('/');
-        if (parts.length > 1) {
-          parts.shift();
-          cleanPath = parts.join('/');
-        }
-        localFileMap.set(cleanPath, file);
-        // Also index by filename alone for quick lookup
-        localFileMap.set(normalizePath(file.name), file);
-      }
-      return localFileMap.size;
-    },
-
-    /**
-     * Register DirectoryHandle from showDirectoryPicker()
-     */
-    async registerDirectoryHandle(handle) {
-      directoryHandle = handle;
-      localFileMap.clear();
-
-      // Scan directory recursively
-      async function scanDir(currentHandle, currentPath = '') {
-        for await (const entry of currentHandle.values()) {
-          const entryPath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
-          if (entry.kind === 'file') {
-            const norm = normalizePath(entryPath);
-            localFileMap.set(norm, entry);
-            localFileMap.set(normalizePath(entry.name), entry);
-          } else if (entry.kind === 'directory') {
-            await scanDir(entry, entryPath);
-          }
-        }
-      }
-
-      await scanDir(handle);
-      return localFileMap.size;
-    },
-
-    /**
-     * Retrieve cover URL for a book (from local folder, IndexedDB, or generated SVG)
+     * Retrieve cover URL (from local folder, IndexedDB, or generated SVG)
      */
     async getCoverUrl(book) {
-      if (!book) return generateSvgCover('Calibre', '', 0);
-
+      if (!book) return generateNextGenCover('Calibre', '', 0);
       const bookId = Number(book.id);
 
-      // 1. Check if cover blob was saved in IndexedDB
+      // 1. Check IndexedDB cover cache
       try {
         const storedCover = await CalibreStorage.getCover(bookId);
         if (storedCover) {
@@ -712,107 +1113,112 @@ const CalibreDB = (function () {
         }
       } catch (e) {}
 
-      // 2. Check if a local Calibre folder was selected with cover.jpg
-      if (book.path && localFileMap.size > 0) {
+      // 2. Check local directory handle or folder map
+      if (book.path) {
         const basePath = normalizePath(book.path);
-        const coverCandidates = [
-          `${basePath}/cover.jpg`,
-          `${basePath}/cover.jpeg`,
-          `${basePath}/cover.png`
-        ];
 
-        for (const cand of coverCandidates) {
-          const match = localFileMap.get(cand);
-          if (match) {
-            try {
-              let fileObj = match;
-              if (typeof match.getFile === 'function') {
-                fileObj = await match.getFile();
-              }
-              const url = URL.createObjectURL(fileObj);
+        // A. If we have a connected DirectoryHandle, try resolving directly
+        if (localDirectoryHandle && localDirectoryStatus === 'connected') {
+          for (const candName of ['cover.jpg', 'cover.jpeg', 'cover.png']) {
+            const file = await resolveFileInHandle(localDirectoryHandle, `${book.path}/${candName}`);
+            if (file) {
+              const url = URL.createObjectURL(file);
               createdObjectUrls.add(url);
               return url;
-            } catch (err) {
-              console.warn('Erreur lecture cover depuis dossier:', err);
             }
+          }
+        }
+
+        // B. Check coverIndex / localFileMap
+        for (const cand of [`${basePath}/cover.jpg`, `${basePath}/cover.jpeg`, `${basePath}/cover.png`]) {
+          const match = localFileMap.get(cand);
+          if (match) {
+            let fileObj = match;
+            if (typeof match.getFile === 'function') {
+              fileObj = await match.getFile();
+            }
+            const url = URL.createObjectURL(fileObj);
+            createdObjectUrls.add(url);
+            return url;
           }
         }
       }
 
-      // 3. Fallback: generate high-quality SVG cover
+      // 3. Fallback: generate NextGen SVG cover
       const authorText = book.authors || book.author_sort || '';
-      return generateSvgCover(book.title, authorText, book.id);
+      return generateNextGenCover(book.title, authorText, book.id);
     },
 
     /**
-     * Retrieve book file Blob (EPUB, PDF...) from IndexedDB or local directory
+     * Retrieve book EPUB file directly from the local directory defined in settings!
      */
     async getBookBlob(bookId, format = 'EPUB') {
       const bId = Number(bookId);
       const fmt = String(format).toUpperCase();
 
-      // 1. Check IndexedDB
-      const stored = await CalibreStorage.getBookFile(bId, fmt);
-      if (stored && stored.blob) {
-        return { blob: stored.blob, filename: stored.filename || `${bId}.${fmt.toLowerCase()}` };
+      // 1. Check local directory (File System Access API DirectoryHandle)
+      const bookDetails = this.getBookDetails(bId);
+
+      if (localDirectoryHandle && localDirectoryStatus === 'connected' && bookDetails) {
+        const matchingFiles = bookDetails.dataFiles.filter((d) => d.format === fmt);
+
+        for (const d of matchingFiles) {
+          // Standard Calibre path: `<books.path>/<data.name>.<fmt>`
+          const relPath = `${bookDetails.path}/${d.name}.${fmt.toLowerCase()}`;
+          const file = await resolveFileInHandle(localDirectoryHandle, relPath);
+          if (file) {
+            return { blob: file, filename: `${d.name}.${fmt.toLowerCase()}`, source: 'local_dir' };
+          }
+        }
+
+        // Also check if any file inside `bookDetails.path` has .epub extension
+        const generalRelPath = `${bookDetails.path}/${bookDetails.title}.${fmt.toLowerCase()}`;
+        const fileByTitle = await resolveFileInHandle(localDirectoryHandle, generalRelPath);
+        if (fileByTitle) {
+          return { blob: fileByTitle, filename: fileByTitle.name, source: 'local_dir' };
+        }
       }
 
-      // 2. Check local folder map if attached
-      if (localFileMap.size > 0) {
-        const bookDetails = this.getBookDetails(bId);
-        if (bookDetails && bookDetails.path) {
-          const basePath = normalizePath(bookDetails.path);
-          // Look for matching data records
-          const matchingFiles = bookDetails.dataFiles.filter((d) => d.format === fmt);
+      // 2. Check localFileMap / epubIndex (from webkitdirectory or previous scan)
+      if (bookDetails && localFileMap.size > 0) {
+        const basePath = normalizePath(bookDetails.path);
+        const matchingFiles = bookDetails.dataFiles.filter((d) => d.format === fmt);
 
-          for (const d of matchingFiles) {
-            const candidatePaths = [
-              `${basePath}/${d.name}.${fmt.toLowerCase()}`,
-              `${basePath}/${d.name}.${fmt.toUpperCase()}`,
-              normalizePath(`${d.name}.${fmt.toLowerCase()}`)
-            ];
-
-            for (const cand of candidatePaths) {
-              const match = localFileMap.get(cand);
-              if (match) {
-                let fileObj = match;
-                if (typeof match.getFile === 'function') {
-                  fileObj = await match.getFile();
-                }
-                return { blob: fileObj, filename: `${d.name}.${fmt.toLowerCase()}` };
+        for (const d of matchingFiles) {
+          const cands = [
+            `${basePath}/${normalizePath(d.name)}.${fmt.toLowerCase()}`,
+            normalizePath(`${d.name}.${fmt.toLowerCase()}`)
+          ];
+          for (const cand of cands) {
+            const match = localFileMap.get(cand);
+            if (match) {
+              let fileObj = match;
+              if (typeof match.getFile === 'function') {
+                fileObj = await match.getFile();
               }
+              return { blob: fileObj, filename: fileObj.name, source: 'local_dir' };
             }
           }
         }
       }
 
-      // 3. Fallback for demo sample book (bookId 1)
+      // 3. Check IndexedDB stored book files
+      const stored = await CalibreStorage.getBookFile(bId, fmt);
+      if (stored && stored.blob) {
+        return { blob: stored.blob, filename: stored.filename, source: 'indexeddb' };
+      }
+
+      // 4. Fallback for demo sample book (bookId 1)
       if (bId === 1 && fmt === 'EPUB') {
         try {
           const resp = await fetch('./sample.epub');
           if (resp.ok) {
             const blob = await resp.blob();
-            return { blob, filename: 'Vingt mille lieues sous les mers.epub' };
+            return { blob, filename: 'Vingt mille lieues sous les mers.epub', source: 'demo' };
           }
         } catch (e) {}
       }
 
-      return null;
-    },
-
-    /**
-     * Find metadata.db inside localFileMap
-     */
-    async findMetadataDbInMap() {
-      const match = localFileMap.get('metadata.db');
-      if (match) {
-        let fileObj = match;
-        if (typeof match.getFile === 'function') {
-          fileObj = await match.getFile();
-        }
-        const buf = await fileObj.arrayBuffer();
-        return { buffer: buf, file: fileObj };
-      }
       return null;
     }
   };

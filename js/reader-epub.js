@@ -15,42 +15,48 @@ const CalibreReader = (function () {
 
   const themes = {
     dark: {
-      name: 'Sombre',
+      name: 'NextGen CaliBlur',
       styles: {
         body: {
-          'background': '#161b22 !important',
-          'color': '#e6edf3 !important',
+          'background': '#141c24 !important',
+          'color': '#ece8e1 !important',
           'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important',
-          'line-height': '1.6 !important'
+          'line-height': '1.7 !important',
+          'padding': '0 8px !important'
         },
-        'a': { 'color': '#58a6ff !important' },
-        'p': { 'margin-bottom': '1em !important' }
+        'a': { 'color': '#e6a13f !important' },
+        'p': { 'margin-bottom': '1.1em !important' },
+        'h1, h2, h3, h4': { 'color': '#ffffff !important' }
       }
     },
     light: {
       name: 'Clair',
       styles: {
         body: {
-          'background': '#ffffff !important',
-          'color': '#24292f !important',
+          'background': '#faf7f2 !important',
+          'color': '#1f2429 !important',
           'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important',
-          'line-height': '1.6 !important'
+          'line-height': '1.7 !important',
+          'padding': '0 8px !important'
         },
-        'a': { 'color': '#0969da !important' },
-        'p': { 'margin-bottom': '1em !important' }
+        'a': { 'color': '#b86510 !important' },
+        'p': { 'margin-bottom': '1.1em !important' },
+        'h1, h2, h3, h4': { 'color': '#111111 !important' }
       }
     },
     sepia: {
       name: 'Sépia',
       styles: {
         body: {
-          'background': '#fbf0d9 !important',
-          'color': '#5f4b32 !important',
+          'background': '#f4ecd8 !important',
+          'color': '#3a2b1c !important',
           'font-family': 'Georgia, serif !important',
-          'line-height': '1.6 !important'
+          'line-height': '1.7 !important',
+          'padding': '0 8px !important'
         },
         'a': { 'color': '#8b572a !important' },
-        'p': { 'margin-bottom': '1em !important' }
+        'p': { 'margin-bottom': '1.1em !important' },
+        'h1, h2, h3, h4': { 'color': '#2a1a0c !important' }
       }
     },
     black: {
@@ -58,12 +64,14 @@ const CalibreReader = (function () {
       styles: {
         body: {
           'background': '#000000 !important',
-          'color': '#b3b3b3 !important',
+          'color': '#b0b8c0 !important',
           'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important',
-          'line-height': '1.6 !important'
+          'line-height': '1.7 !important',
+          'padding': '0 8px !important'
         },
-        'a': { 'color': '#4ea1f3 !important' },
-        'p': { 'margin-bottom': '1em !important' }
+        'a': { 'color': '#cc7b19 !important' },
+        'p': { 'margin-bottom': '1.1em !important' },
+        'h1, h2, h3, h4': { 'color': '#e0e0e0 !important' }
       }
     }
   };

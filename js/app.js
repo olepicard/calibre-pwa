@@ -1,14 +1,15 @@
 /**
- * Calibre-Web PWA - Main Application Controller
- * Handles routing, view switching, book card rendering, search debounce, modals, and PWA installation.
+ * Calibre-Web NextGen PWA - Main Application Controller
+ * Handles NextGen Smart Shelves, Local Directory configuration in Settings,
+ * Author & Series detail views, Custom Shelves, and Android PWA installation.
  */
 
 const CalibreApp = (function () {
   'use strict';
 
-  // Application state
+  // Application State
   const state = {
-    currentTab: 'books',
+    currentTab: 'home',
     books: [],
     totalBooks: 0,
     page: 0,
@@ -19,14 +20,14 @@ const CalibreApp = (function () {
     selectedAuthor: null, // { id, name }
     selectedSeries: null, // { id, name }
     selectedTag: null,    // { id, name }
-    selectedFormat: null, // string (e.g. 'EPUB', 'PDF')
+    selectedFormat: null, // string
+    currentShelfId: null, // custom shelf ID
     sortBy: 'timestamp_desc',
     viewMode: 'grid',    // 'grid' or 'list'
-    theme: 'theme-dark',  // 'theme-dark', 'theme-light', 'theme-sepia'
+    theme: 'dark',        // 'dark', 'light', 'sepia'
     selectedBookId: null
   };
 
-  // Debounce helper
   function debounce(fn, delay = 250) {
     let timer = null;
     return function (...args) {
@@ -35,7 +36,6 @@ const CalibreApp = (function () {
     };
   }
 
-  // Format file sizes
   function formatBytes(bytes) {
     if (!bytes || bytes === 0) return '0 B';
     const k = 1024;
@@ -44,10 +44,8 @@ const CalibreApp = (function () {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
-  // Render rating stars
   function renderStars(rating) {
     if (!rating) return '';
-    // Calibre ratings are usually 0, 2, 4, 6, 8, 10 (corresponding to 0 to 5 stars)
     const stars = Math.round(rating / 2);
     let str = '';
     for (let i = 1; i <= 5; i++) {
@@ -60,41 +58,43 @@ const CalibreApp = (function () {
    * Initialize Application
    */
   async function init() {
-    setupTheme();
+    await setupTheme();
     setupPwaInstall();
     setupDialogDismissFallbacks();
     setupEventListeners();
 
-    // Check saved view mode
     const savedMode = await CalibreStorage.getSetting('view_mode', 'grid');
     setViewMode(savedMode, false);
 
-    // Try initializing DB from IndexedDB
     updateDbStatusBadge('Initialisation...', 'badge-loading');
 
     try {
-      const dbStatus = await CalibreDB.init();
+      const initResult = await CalibreDB.init();
 
-      if (dbStatus.loaded) {
-        updateDbStatusBadge(`${dbStatus.name} chargé`, 'badge-success');
+      if (initResult.loaded) {
+        updateDbStatusBadge(`${initResult.name} chargé`, 'badge-success');
         refreshStats();
-        loadBooks(true);
+        // Load default view
+        switchTab('home');
       } else {
         updateDbStatusBadge('Aucune base chargée', 'badge-warning');
-        showEmptyLibraryBanner();
+        switchTab('settings');
       }
+
+      // Update Local Directory status display in Settings
+      updateLocalDirectoryUI();
+
     } catch (err) {
       console.error('Erreur initialisation CalibreDB:', err);
       updateDbStatusBadge('Erreur DB', 'badge-danger');
       showToast('Erreur initialisation : ' + err.message, 'error');
     }
 
-    // Register Service Worker for offline PWA
     registerServiceWorker();
   }
 
   /**
-   * Service Worker Registration
+   * Service Worker for offline PWA
    */
   function registerServiceWorker() {
     if ('serviceWorker' in navigator) {
@@ -119,8 +119,7 @@ const CalibreApp = (function () {
   }
 
   /**
-   * Setup PWA Installation handling according to modern web guidance:
-   * Uses navigator.install() if supported, falls back to beforeinstallprompt event.
+   * Setup PWA Installation handling according to modern web guidance
    */
   function setupPwaInstall() {
     const installBtn = document.getElementById('btn-install-app');
@@ -182,7 +181,7 @@ const CalibreApp = (function () {
   }
 
   /**
-   * Setup Dialog light-dismiss fallback for browsers not supporting closedby
+   * Dialog light-dismiss fallback
    */
   function setupDialogDismissFallbacks() {
     const dialogs = document.querySelectorAll('dialog');
@@ -208,11 +207,10 @@ const CalibreApp = (function () {
    * Setup UI Event Listeners
    */
   function setupEventListeners() {
-    // Bottom Navigation tabs
+    // Nav tabs
     document.querySelectorAll('.nav-tab').forEach((tab) => {
-      tab.addEventListener('click', (e) => {
-        const targetTab = tab.dataset.tab;
-        switchTab(targetTab);
+      tab.addEventListener('click', () => {
+        switchTab(tab.dataset.tab);
       });
     });
 
@@ -223,7 +221,11 @@ const CalibreApp = (function () {
     searchInput.addEventListener('input', debounce((e) => {
       state.searchQuery = e.target.value.trim();
       clearSearchBtn.hidden = !state.searchQuery;
-      loadBooks(true);
+      if (state.currentTab !== 'books') {
+        switchTab('books');
+      } else {
+        loadBooks(true);
+      }
     }, 250));
 
     clearSearchBtn.addEventListener('click', () => {
@@ -234,20 +236,19 @@ const CalibreApp = (function () {
     });
 
     // Sort selector
-    const sortSelect = document.getElementById('sort-select');
-    sortSelect.addEventListener('change', (e) => {
+    document.getElementById('sort-select').addEventListener('change', (e) => {
       state.sortBy = e.target.value;
       loadBooks(true);
     });
 
-    // View mode toggle (grid / list)
+    // View mode toggle
     document.getElementById('btn-view-grid').addEventListener('click', () => setViewMode('grid'));
     document.getElementById('btn-view-list').addEventListener('click', () => setViewMode('list'));
 
     // Theme toggle
     document.getElementById('btn-theme-toggle').addEventListener('click', cycleTheme);
 
-    // Infinite scroll on window
+    // Infinite scroll
     window.addEventListener('scroll', () => {
       if (state.currentTab !== 'books' || state.isLoading || !state.hasMore) return;
       const scrollPosition = window.innerHeight + window.scrollY;
@@ -257,8 +258,23 @@ const CalibreApp = (function () {
       }
     });
 
-    // Database Actions:
-    // 1. Single file input (metadata.db)
+    // Local Directory Settings Handlers
+    document.getElementById('btn-define-local-dir').addEventListener('click', defineLocalDirectory);
+    document.getElementById('btn-rescan-local-dir').addEventListener('click', rescanLocalDirectory);
+    document.getElementById('btn-disconnect-local-dir').addEventListener('click', disconnectLocalDirectory);
+
+    // Hidden folder input for fallback
+    const inputFolderFallback = document.getElementById('input-folder-fallback');
+    inputFolderFallback.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files);
+      if (!files.length) return;
+      const res = CalibreDB.registerFileList(files);
+      showToast(`Dossier local associé ! ${res.epubsCount} EPUBs indexés.`, 'success');
+      updateLocalDirectoryUI();
+      inputFolderFallback.value = '';
+    });
+
+    // Database Actions
     const fileDbInput = document.getElementById('input-file-db');
     fileDbInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -267,26 +283,12 @@ const CalibreApp = (function () {
       fileDbInput.value = '';
     });
 
-    // 2. Folder picker (showDirectoryPicker or webkitdirectory)
-    const btnPickFolder = document.getElementById('btn-pick-folder');
-    btnPickFolder.addEventListener('click', handleFolderPick);
-
-    const inputFolder = document.getElementById('input-folder');
-    inputFolder.addEventListener('change', async (e) => {
-      const files = Array.from(e.target.files);
-      if (!files.length) return;
-      await handleFolderFiles(files);
-      inputFolder.value = '';
-    });
-
-    // 3. Demo database loader
     document.getElementById('btn-load-demo').addEventListener('click', loadDemoDatabase);
-
-    // 4. Export database
     document.getElementById('btn-export-db').addEventListener('click', exportDatabase);
-
-    // 5. Clear storage
     document.getElementById('btn-clear-db').addEventListener('click', clearLibrary);
+
+    // Shelves Actions
+    document.getElementById('btn-create-shelf').addEventListener('click', promptCreateShelf);
 
     // Book Detail Modal Buttons
     document.getElementById('modal-close-btn').addEventListener('click', () => {
@@ -294,10 +296,19 @@ const CalibreApp = (function () {
     });
 
     document.getElementById('modal-read-epub-btn').addEventListener('click', readCurrentBook);
-    document.getElementById('modal-read-pdf-btn').addEventListener('click', readCurrentBookPdf);
     document.getElementById('modal-share-btn').addEventListener('click', shareCurrentBook);
+    document.getElementById('modal-add-shelf-btn').addEventListener('click', openAddToShelfDialog);
 
-    // Book file association
+    // Reading Status Selector
+    document.getElementById('modal-reading-status-select').addEventListener('change', async (e) => {
+      if (!state.selectedBookId) return;
+      const newStatus = e.target.value;
+      await CalibreStorage.setReadingStatus(state.selectedBookId, newStatus);
+      showToast(`Statut mis à jour : ${newStatus === 'read' ? 'Terminé' : newStatus === 'reading' ? 'En cours' : 'Non lu'}`, 'success');
+      if (state.currentTab === 'home') loadMagicShelves();
+    });
+
+    // Book file manual association
     const inputBookFile = document.getElementById('input-associate-file');
     inputBookFile.addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -308,78 +319,674 @@ const CalibreApp = (function () {
   }
 
   /**
-   * Switch active tab
+   * Switch Active Tab
    */
   function switchTab(tabName) {
     state.currentTab = tabName;
 
-    // Update nav tabs
+    // Update bottom nav tabs
     document.querySelectorAll('.nav-tab').forEach((tab) => {
       tab.classList.toggle('active', tab.dataset.tab === tabName);
     });
 
-    // Update tab sections
+    // Update sections
     document.querySelectorAll('.tab-section').forEach((section) => {
       section.classList.toggle('active', section.id === `section-${tabName}`);
     });
 
-    // Scroll to top
     window.scrollTo({ top: 0, behavior: 'instant' });
 
-    // Load data for the active tab
-    if (tabName === 'books') {
-      if (state.books.length === 0 && CalibreDB.isLoaded()) {
-        loadBooks(true);
-      }
+    if (tabName === 'home') {
+      loadMagicShelves();
+    } else if (tabName === 'books') {
+      loadBooks(true);
+    } else if (tabName === 'shelves') {
+      loadShelvesView();
     } else if (tabName === 'authors') {
       loadAuthorsList();
     } else if (tabName === 'series') {
       loadSeriesList();
-    } else if (tabName === 'tags') {
-      loadTagsList();
     } else if (tabName === 'settings') {
       refreshStorageInfo();
+      updateLocalDirectoryUI();
     }
   }
 
   /**
-   * Set View Mode (grid vs list)
+   * Local Directory Settings Management
    */
-  function setViewMode(mode, save = true) {
-    state.viewMode = mode;
+  async function defineLocalDirectory() {
+    if ('showDirectoryPicker' in window) {
+      try {
+        const dirHandle = await window.showDirectoryPicker({
+          mode: 'read',
+          startIn: 'documents'
+        });
+
+        showToast('Indexation du dossier local...', 'info');
+        const res = await CalibreDB.setLocalDirectoryHandle(dirHandle);
+
+        showToast(`Dossier connecté ! ${res.epubsCount} EPUBs détectés.`, 'success');
+        updateLocalDirectoryUI();
+
+        if (res.hasMetadataDb) {
+          updateDbStatusBadge('metadata.db connecté', 'badge-success');
+          refreshStats();
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Erreur showDirectoryPicker:', err);
+          document.getElementById('input-folder-fallback').click();
+        }
+      }
+    } else {
+      document.getElementById('input-folder-fallback').click();
+    }
+  }
+
+  async function rescanLocalDirectory() {
+    const dirInfo = CalibreDB.getLocalDirectoryInfo();
+    if (!dirInfo.handle) {
+      showToast('Aucun dossier local sélectionné.', 'warning');
+      return;
+    }
+
+    // Re-verify permission if needed
+    if (dirInfo.status === 'needs_permission') {
+      const granted = await CalibreDB.requestDirectoryPermission();
+      if (!granted) {
+        showToast('Permission d\'accès refusée.', 'error');
+        updateLocalDirectoryUI();
+        return;
+      }
+    }
+
+    showToast('Ré-indexation des fichiers locaux...', 'info');
+    await CalibreDB.scanDirectoryHandle(dirInfo.handle);
+    const updated = CalibreDB.getLocalDirectoryInfo();
+    showToast(`Indexation terminée : ${updated.epubsCount} EPUBs locaux trouvés.`, 'success');
+    updateLocalDirectoryUI();
+  }
+
+  async function disconnectLocalDirectory() {
+    if (!confirm('Voulez-vous déconnecter le dossier local des livres ?')) return;
+    await CalibreDB.removeLocalDirectory();
+    updateLocalDirectoryUI();
+    showToast('Dossier local déconnecté.', 'info');
+  }
+
+  function updateLocalDirectoryUI() {
+    const info = CalibreDB.getLocalDirectoryInfo();
+    const card = document.getElementById('local-dir-card');
+    const statusBadge = document.getElementById('dir-status-badge');
+    const pathDisplay = document.getElementById('dir-path-display');
+    const countDisplay = document.getElementById('dir-epubs-count');
+    const btnRescan = document.getElementById('btn-rescan-local-dir');
+    const btnDisconnect = document.getElementById('btn-disconnect-local-dir');
+
+    if (info.status === 'connected') {
+      card.className = 'local-dir-card connected';
+      statusBadge.textContent = 'Connecté';
+      statusBadge.className = 'status-badge badge-success';
+      pathDisplay.textContent = info.name || 'Dossier Calibre';
+      countDisplay.textContent = `${info.epubsCount.toLocaleString('fr-FR')} EPUBs indexés`;
+      btnRescan.hidden = false;
+      btnDisconnect.hidden = false;
+    } else if (info.status === 'needs_permission') {
+      card.className = 'local-dir-card';
+      statusBadge.textContent = 'Autorisation requise';
+      statusBadge.className = 'status-badge badge-warning';
+      pathDisplay.textContent = `${info.name} (Cliquez sur Ré-indexer pour autoriser)`;
+      countDisplay.textContent = 'En attente d\'autorisation';
+      btnRescan.hidden = false;
+      btnDisconnect.hidden = false;
+    } else {
+      card.className = 'local-dir-card';
+      statusBadge.textContent = 'Non configuré';
+      statusBadge.className = 'status-badge badge-warning';
+      pathDisplay.textContent = 'Aucun répertoire local défini pour les livres';
+      countDisplay.textContent = '0 EPUBs';
+      btnRescan.hidden = true;
+      btnDisconnect.hidden = true;
+    }
+  }
+
+  /**
+   * Load NextGen Magic Shelves (Dashboard)
+   */
+  async function loadMagicShelves() {
+    if (!CalibreDB.isLoaded()) {
+      showEmptyLibraryBanner();
+      return;
+    }
+
+    // 1. Continue Reading (Livres en cours)
+    const continueBooks = await CalibreDB.getMagicShelfBooks('continue_reading', 12);
+    renderShelfRow('shelf-continue-reading', continueBooks, '📖 En cours de lecture');
+
+    // 2. Recently Added (Nouveautés)
+    const recentBooks = await CalibreDB.getMagicShelfBooks('recently_added', 16);
+    renderShelfRow('shelf-recently-added', recentBooks, '✨ Récemment ajoutés');
+
+    // 3. Top Rated (Mieux notés)
+    const topBooks = await CalibreDB.getMagicShelfBooks('top_rated', 16);
+    renderShelfRow('shelf-top-rated', topBooks, '⭐ Les mieux notés');
+
+    // 4. Random / Discover (Découverte)
+    const randomBooks = await CalibreDB.getMagicShelfBooks('random', 16);
+    renderShelfRow('shelf-random', randomBooks, '🎲 Découverte au hasard');
+  }
+
+  function renderShelfRow(containerId, booksList, title) {
+    const section = document.getElementById(containerId);
+    if (!section) return;
+
+    if (!booksList.length) {
+      section.hidden = true;
+      return;
+    }
+    section.hidden = false;
+
+    const scrollContainer = section.querySelector('.magic-shelf-scroll');
+    scrollContainer.innerHTML = '';
+
+    for (const book of booksList) {
+      const card = createBookCardElement(book);
+      scrollContainer.appendChild(card);
+    }
+  }
+
+  /**
+   * Create standard NextGen Book Card Element
+   */
+  function createBookCardElement(book) {
+    const card = document.createElement('article');
+    card.className = 'book-card';
+    card.dataset.bookId = book.id;
+
+    const coverWrapper = document.createElement('div');
+    coverWrapper.className = 'book-cover-wrapper';
+
+    const img = document.createElement('img');
+    img.className = 'book-cover-img';
+    img.alt = `Couverture de ${book.title}`;
+    img.loading = 'lazy';
+
+    CalibreDB.getCoverUrl(book).then((url) => {
+      img.src = url;
+    });
+
+    coverWrapper.appendChild(img);
+
+    if (book.series) {
+      const seriesBadge = document.createElement('span');
+      seriesBadge.className = 'book-badge-series';
+      seriesBadge.textContent = `#${book.series_index}`;
+      coverWrapper.appendChild(seriesBadge);
+    }
+
+    if (book.formats && book.formats.length > 0) {
+      const fmtsBadge = document.createElement('span');
+      fmtsBadge.className = 'book-badge-formats';
+      fmtsBadge.textContent = book.formats[0];
+      coverWrapper.appendChild(fmtsBadge);
+    }
+
+    // Check reading progress for overlay bar
+    CalibreStorage.getProgress(book.id).then((prog) => {
+      if (prog && prog.percentage > 0) {
+        const bar = document.createElement('div');
+        bar.className = 'book-progress-bar-cover';
+        bar.innerHTML = `<div class="book-progress-fill" style="width: ${prog.percentage}%"></div>`;
+        coverWrapper.appendChild(bar);
+      }
+    });
+
+    const info = document.createElement('div');
+    info.className = 'book-info';
+
+    const title = document.createElement('h3');
+    title.className = 'book-title';
+    title.textContent = book.title;
+
+    const author = document.createElement('p');
+    author.className = 'book-author';
+    author.textContent = book.authors;
+
+    info.appendChild(title);
+    info.appendChild(author);
+
+    if (book.rating) {
+      const ratingEl = document.createElement('div');
+      ratingEl.className = 'book-rating';
+      ratingEl.innerHTML = renderStars(book.rating);
+      info.appendChild(ratingEl);
+    }
+
+    card.appendChild(coverWrapper);
+    card.appendChild(info);
+
+    card.addEventListener('click', () => {
+      openBookDetail(book.id);
+    });
+
+    return card;
+  }
+
+  /**
+   * Load books into the books view
+   */
+  async function loadBooks(reset = false) {
+    if (!CalibreDB.isLoaded()) {
+      showEmptyLibraryBanner();
+      return;
+    }
+
+    if (reset) {
+      state.page = 0;
+      state.books = [];
+      state.hasMore = true;
+      document.getElementById('books-container').innerHTML = '';
+    }
+
+    state.isLoading = true;
+    updateFilterChips();
+    document.getElementById('loading-indicator').hidden = false;
+
+    const offset = state.page * state.pageSize;
+    const res = CalibreDB.getBooks({
+      search: state.searchQuery,
+      authorId: state.selectedAuthor ? state.selectedAuthor.id : null,
+      seriesId: state.selectedSeries ? state.selectedSeries.id : null,
+      tagId: state.selectedTag ? state.selectedTag.id : null,
+      format: state.selectedFormat,
+      sortBy: state.sortBy,
+      offset: offset,
+      limit: state.pageSize
+    });
+
+    state.totalBooks = res.total;
+    state.books = state.books.concat(res.books);
+    state.hasMore = state.books.length < state.totalBooks;
+
+    const counterEl = document.getElementById('books-count-header');
+    if (counterEl) {
+      counterEl.textContent = `${state.totalBooks.toLocaleString('fr-FR')} livres`;
+    }
+
     const container = document.getElementById('books-container');
-    container.classList.toggle('view-mode-grid', mode === 'grid');
-    container.classList.toggle('view-mode-list', mode === 'list');
+    for (const book of res.books) {
+      container.appendChild(createBookCardElement(book));
+    }
 
-    document.getElementById('btn-view-grid').classList.toggle('active', mode === 'grid');
-    document.getElementById('btn-view-list').classList.toggle('active', mode === 'list');
+    state.isLoading = false;
+    document.getElementById('loading-indicator').hidden = true;
 
-    if (save) {
-      CalibreStorage.setSetting('view_mode', mode);
+    const emptyEl = document.getElementById('no-books-found');
+    if (emptyEl) {
+      emptyEl.hidden = state.totalBooks > 0;
+    }
+  }
+
+  function loadMoreBooks() {
+    if (state.isLoading || !state.hasMore) return;
+    state.page++;
+    loadBooks(false);
+  }
+
+  /**
+   * Open Book Details Modal
+   */
+  async function openBookDetail(bookId) {
+    state.selectedBookId = Number(bookId);
+    const dialog = document.getElementById('book-detail-dialog');
+    const details = CalibreDB.getBookDetails(bookId);
+    if (!details) return;
+
+    document.getElementById('modal-book-title').textContent = details.title;
+    document.getElementById('modal-book-author').textContent = details.authors.map(a => a.name).join(', ') || details.author_sort || 'Auteur inconnu';
+
+    // Series row & series navigation
+    const seriesRow = document.getElementById('modal-series-row');
+    const seriesNav = document.getElementById('modal-series-nav');
+    if (details.series && details.series.length > 0) {
+      seriesRow.hidden = false;
+      document.getElementById('modal-book-series').textContent = `${details.series.map(s => s.name).join(', ')} (Tome ${details.series_index})`;
+
+      if (details.seriesNavigation && (details.seriesNavigation.prev || details.seriesNavigation.next)) {
+        seriesNav.hidden = false;
+        seriesNav.innerHTML = `
+          ${details.seriesNavigation.prev ? `<button class="series-nav-btn" onclick="CalibreApp.openBookDetail(${details.seriesNavigation.prev.id})">‹ Tome ${details.seriesNavigation.prev.index}</button>` : '<span></span>'}
+          <span>${details.seriesNavigation.seriesName}</span>
+          ${details.seriesNavigation.next ? `<button class="series-nav-btn" onclick="CalibreApp.openBookDetail(${details.seriesNavigation.next.id})">Tome ${details.seriesNavigation.next.index} ›</button>` : '<span></span>'}
+        `;
+      } else {
+        seriesNav.hidden = true;
+      }
+    } else {
+      seriesRow.hidden = true;
+      seriesNav.hidden = true;
+    }
+
+    // Rating
+    const ratingRow = document.getElementById('modal-rating-row');
+    if (details.rating) {
+      ratingRow.hidden = false;
+      document.getElementById('modal-book-rating').innerHTML = renderStars(details.rating);
+    } else {
+      ratingRow.hidden = true;
+    }
+
+    // Publisher
+    const pubRow = document.getElementById('modal-pub-row');
+    if (details.publishers && details.publishers.length > 0) {
+      pubRow.hidden = false;
+      document.getElementById('modal-book-publisher').textContent = details.publishers.map(p => p.name).join(', ');
+    } else {
+      pubRow.hidden = true;
+    }
+
+    // Reading Status Selector
+    const currentStatus = await CalibreStorage.getReadingStatus(bookId);
+    document.getElementById('modal-reading-status-select').value = currentStatus;
+
+    // Tags
+    const tagsContainer = document.getElementById('modal-tags-container');
+    tagsContainer.innerHTML = '';
+    if (details.tags && details.tags.length > 0) {
+      details.tags.forEach((tag) => {
+        const badge = document.createElement('button');
+        badge.type = 'button';
+        badge.className = 'tag-badge';
+        badge.textContent = tag.name;
+        badge.addEventListener('click', () => {
+          dialog.close();
+          filterByTag(tag.id, tag.name);
+        });
+        tagsContainer.appendChild(badge);
+      });
+      tagsContainer.parentElement.hidden = false;
+    } else {
+      tagsContainer.parentElement.hidden = true;
+    }
+
+    // Synopsis
+    const commentEl = document.getElementById('modal-book-comment');
+    if (details.comment) {
+      commentEl.innerHTML = details.comment;
+    } else {
+      commentEl.innerHTML = '<em>Aucune description disponible pour ce livre.</em>';
+    }
+
+    // Cover image
+    const coverImg = document.getElementById('modal-book-cover');
+    coverImg.src = await CalibreDB.getCoverUrl(details);
+
+    // Look for EPUB file in the local directory or storage
+    const btnReadEpub = document.getElementById('modal-read-epub-btn');
+    const btnShare = document.getElementById('modal-share-btn');
+    const fileStatusText = document.getElementById('modal-file-status');
+
+    btnReadEpub.hidden = true;
+    btnShare.hidden = true;
+
+    // Try finding EPUB directly
+    const epubBlobInfo = await CalibreDB.getBookBlob(bookId, 'EPUB');
+
+    if (epubBlobInfo) {
+      btnReadEpub.hidden = false;
+      btnShare.hidden = false;
+      const originText = epubBlobInfo.source === 'local_dir' ? 'dossier local' : epubBlobInfo.source === 'indexeddb' ? 'stockage PWA' : 'démo';
+      fileStatusText.textContent = `✓ Fichier EPUB disponible (${formatBytes(epubBlobInfo.blob.size || 0)} - source : ${originText})`;
+      fileStatusText.className = 'status-available';
+    } else {
+      const formatsInDb = details.dataFiles.map(d => d.format).join(', ');
+      fileStatusText.textContent = formatsInDb
+        ? `Formats Calibre : ${formatsInDb}. Fichier non trouvé dans le dossier local défini.`
+        : `Aucun fichier ebook associé.`;
+      fileStatusText.className = 'status-missing';
+    }
+
+    dialog.showModal();
+  }
+
+  /**
+   * Read current book in EPUB reader
+   */
+  async function readCurrentBook() {
+    if (!state.selectedBookId) return;
+    const fileInfo = await CalibreDB.getBookBlob(state.selectedBookId, 'EPUB');
+    if (!fileInfo) {
+      showToast('Fichier EPUB non disponible. Vérifiez le dossier local dans les Paramètres.', 'warning');
+      return;
+    }
+
+    const details = CalibreDB.getBookDetails(state.selectedBookId);
+    document.getElementById('book-detail-dialog').close();
+    CalibreReader.open(state.selectedBookId, fileInfo.blob, details.title);
+  }
+
+  /**
+   * Share book file with external Android reading apps
+   */
+  async function shareCurrentBook() {
+    if (!state.selectedBookId) return;
+    const fileInfo = await CalibreDB.getBookBlob(state.selectedBookId, 'EPUB');
+    if (!fileInfo) return;
+
+    const details = CalibreDB.getBookDetails(state.selectedBookId);
+    const file = new File([fileInfo.blob], fileInfo.filename, { type: 'application/epub+zip' });
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+          title: details.title,
+          text: `Lire ${details.title}`
+        });
+      } catch (err) {
+        if (err.name !== 'AbortError') console.error('Erreur partage:', err);
+      }
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(fileInfo.blob);
+      a.download = fileInfo.filename;
+      a.click();
+      showToast('Téléchargement du livre lancé.', 'info');
     }
   }
 
   /**
-   * Theme Setup & Switcher
+   * Associate an uploaded ebook file to a book record
    */
-  async function setupTheme() {
-    const savedTheme = await CalibreStorage.getSetting('app_theme', 'theme-dark');
-    state.theme = savedTheme;
-    document.documentElement.className = savedTheme;
-  }
-
-  function cycleTheme() {
-    const themes = ['theme-dark', 'theme-light', 'theme-sepia'];
-    const curIdx = themes.indexOf(state.theme);
-    const nextTheme = themes[(curIdx + 1) % themes.length];
-    state.theme = nextTheme;
-    document.documentElement.className = nextTheme;
-    CalibreStorage.setSetting('app_theme', nextTheme);
-    showToast(`Thème changé : ${nextTheme.replace('theme-', '')}`, 'info');
+  async function associateBookFile(bookId, file) {
+    const ext = file.name.split('.').pop().toUpperCase();
+    try {
+      await CalibreStorage.saveBookFile(bookId, ext, file, file.name);
+      showToast(`Fichier ${ext} associé avec succès !`, 'success');
+      openBookDetail(bookId);
+      loadBooks(true);
+    } catch (err) {
+      console.error('Erreur association fichier:', err);
+      showToast('Erreur association : ' + err.message, 'error');
+    }
   }
 
   /**
-   * Update active filter chips
+   * Shelves View & Management
+   */
+  async function loadShelvesView() {
+    const container = document.getElementById('shelves-list-container');
+    container.innerHTML = '<div class="loading-indicator"><div class="spinner"></div></div>';
+
+    const shelves = await CalibreStorage.getShelves();
+    container.innerHTML = '';
+
+    if (!shelves.length) {
+      container.innerHTML = '<div class="empty-state-card"><p>Aucune étagère créée.</p></div>';
+      return;
+    }
+
+    shelves.forEach((s) => {
+      const item = document.createElement('div');
+      item.className = 'list-item-row';
+      item.innerHTML = `
+        <span class="item-name"><span aria-hidden="true">${s.icon || '📚'}</span> ${s.name}</span>
+        <span class="item-count-badge">${s.bookIds.length} livre${s.bookIds.length > 1 ? 's' : ''}</span>
+      `;
+      item.addEventListener('click', () => openShelfDetail(s));
+      container.appendChild(item);
+    });
+  }
+
+  async function openShelfDetail(shelf) {
+    state.currentShelfId = shelf.id;
+    const books = CalibreDB.getBooksByIds(shelf.bookIds);
+
+    document.getElementById('shelf-detail-title').textContent = `${shelf.icon || '📚'} ${shelf.name}`;
+    document.getElementById('shelf-detail-desc').textContent = shelf.description || '';
+    const booksContainer = document.getElementById('shelf-books-container');
+    booksContainer.innerHTML = '';
+
+    if (!books.length) {
+      booksContainer.innerHTML = '<p style="color: var(--text-muted); padding: 16px;">Cette étagère est vide. Ajoutez-y des livres depuis leur fiche détaillée !</p>';
+    } else {
+      for (const book of books) {
+        booksContainer.appendChild(createBookCardElement(book));
+      }
+    }
+
+    document.getElementById('shelves-main-view').hidden = true;
+    document.getElementById('shelf-detail-view').hidden = false;
+  }
+
+  function closeShelfDetail() {
+    document.getElementById('shelf-detail-view').hidden = true;
+    document.getElementById('shelves-main-view').hidden = false;
+    loadShelvesView();
+  }
+
+  async function promptCreateShelf() {
+    const name = prompt('Nom de la nouvelle étagère :');
+    if (!name || !name.trim()) return;
+    const desc = prompt('Description (optionnelle) :') || '';
+    await CalibreStorage.createShelf(name.trim(), desc.trim());
+    showToast(`Étagère « ${name.trim()} » créée !`, 'success');
+    loadShelvesView();
+  }
+
+  async function openAddToShelfDialog() {
+    if (!state.selectedBookId) return;
+    const shelves = await CalibreStorage.getShelves();
+    const shelfNames = shelves.map((s, idx) => `${idx + 1}. ${s.name}`).join('\n');
+    const choice = prompt(`Ajouter à quelle étagère ?\n${shelfNames}\nEntrez le numéro :`);
+    const num = parseInt(choice, 10);
+    if (!isNaN(num) && num >= 1 && num <= shelves.length) {
+      const targetShelf = shelves[num - 1];
+      await CalibreStorage.addBookToShelf(targetShelf.id, state.selectedBookId);
+      showToast(`Livre ajouté à « ${targetShelf.name} » !`, 'success');
+    }
+  }
+
+  /**
+   * Authors & Series detail views
+   */
+  function loadAuthorsList() {
+    const container = document.getElementById('authors-list-container');
+    const authors = CalibreDB.getAuthors({ limit: 200 });
+
+    container.innerHTML = '';
+    if (!authors.length) {
+      container.innerHTML = '<div class="empty-list">Aucun auteur trouvé.</div>';
+      return;
+    }
+
+    authors.forEach((a) => {
+      const item = document.createElement('div');
+      item.className = 'list-item-row';
+      item.innerHTML = `
+        <span class="item-name">${a.name}</span>
+        <span class="item-count-badge">${a.book_count} livre${a.book_count > 1 ? 's' : ''}</span>
+      `;
+      item.addEventListener('click', () => openAuthorDetail(a.id));
+      container.appendChild(item);
+    });
+  }
+
+  function openAuthorDetail(authorId) {
+    const details = CalibreDB.getAuthorDetails(authorId);
+    if (!details) return;
+
+    document.getElementById('author-detail-name').textContent = details.name;
+    document.getElementById('author-detail-count').textContent = `${details.totalBooks} livre${details.totalBooks > 1 ? 's' : ''}`;
+    const container = document.getElementById('author-books-container');
+    container.innerHTML = '';
+
+    for (const book of details.books) {
+      container.appendChild(createBookCardElement(book));
+    }
+
+    document.getElementById('authors-main-view').hidden = true;
+    document.getElementById('author-detail-view').hidden = false;
+  }
+
+  function closeAuthorDetail() {
+    document.getElementById('author-detail-view').hidden = true;
+    document.getElementById('authors-main-view').hidden = false;
+  }
+
+  function loadSeriesList() {
+    const container = document.getElementById('series-list-container');
+    const series = CalibreDB.getSeries({ limit: 200 });
+
+    container.innerHTML = '';
+    if (!series.length) {
+      container.innerHTML = '<div class="empty-list">Aucune série trouvée.</div>';
+      return;
+    }
+
+    series.forEach((s) => {
+      const item = document.createElement('div');
+      item.className = 'list-item-row';
+      item.innerHTML = `
+        <span class="item-name">${s.name}</span>
+        <span class="item-count-badge">${s.book_count} tome${s.book_count > 1 ? 's' : ''}</span>
+      `;
+      item.addEventListener('click', () => openSeriesDetail(s.id));
+      container.appendChild(item);
+    });
+  }
+
+  function openSeriesDetail(seriesId) {
+    const details = CalibreDB.getSeriesDetails(seriesId);
+    if (!details) return;
+
+    document.getElementById('series-detail-name').textContent = details.name;
+    document.getElementById('series-detail-count').textContent = `${details.totalBooks} tomes`;
+    const container = document.getElementById('series-books-container');
+    container.innerHTML = '';
+
+    for (const book of details.books) {
+      container.appendChild(createBookCardElement(book));
+    }
+
+    document.getElementById('series-main-view').hidden = true;
+    document.getElementById('series-detail-view').hidden = false;
+  }
+
+  function closeSeriesDetail() {
+    document.getElementById('series-detail-view').hidden = true;
+    document.getElementById('series-main-view').hidden = false;
+  }
+
+  function filterByTag(id, name) {
+    state.selectedTag = { id, name };
+    switchTab('books');
+    loadBooks(true);
+  }
+
+  /**
+   * Filter Chips
    */
   function updateFilterChips() {
     const container = document.getElementById('active-filters');
@@ -425,439 +1032,34 @@ const CalibreApp = (function () {
     container.hidden = chips.length === 0;
   }
 
-  /**
-   * Load books into the books view
-   */
-  async function loadBooks(reset = false) {
-    if (!CalibreDB.isLoaded()) {
-      showEmptyLibraryBanner();
-      return;
-    }
-
-    if (reset) {
-      state.page = 0;
-      state.books = [];
-      state.hasMore = true;
-      document.getElementById('books-container').innerHTML = '';
-    }
-
-    state.isLoading = true;
-    updateFilterChips();
-    document.getElementById('loading-indicator').hidden = false;
-
-    const offset = state.page * state.pageSize;
-    const res = CalibreDB.getBooks({
-      search: state.searchQuery,
-      authorId: state.selectedAuthor ? state.selectedAuthor.id : null,
-      seriesId: state.selectedSeries ? state.selectedSeries.id : null,
-      tagId: state.selectedTag ? state.selectedTag.id : null,
-      format: state.selectedFormat,
-      sortBy: state.sortBy,
-      offset: offset,
-      limit: state.pageSize
-    });
-
-    state.totalBooks = res.total;
-    state.books = state.books.concat(res.books);
-    state.hasMore = state.books.length < state.totalBooks;
-
-    // Update book counter header
-    const counterEl = document.getElementById('books-count-header');
-    if (counterEl) {
-      counterEl.textContent = `${state.totalBooks.toLocaleString('fr-FR')} livres`;
-    }
-
-    // Render new book items
-    renderBookCards(res.books);
-
-    state.isLoading = false;
-    document.getElementById('loading-indicator').hidden = true;
-
-    // Show empty state if total === 0
-    const emptyEl = document.getElementById('no-books-found');
-    if (emptyEl) {
-      emptyEl.hidden = state.totalBooks > 0;
-    }
-  }
-
-  function loadMoreBooks() {
-    if (state.isLoading || !state.hasMore) return;
-    state.page++;
-    loadBooks(false);
-  }
-
-  /**
-   * Render book cards into DOM
-   */
-  async function renderBookCards(booksList) {
+  function setViewMode(mode, save = true) {
+    state.viewMode = mode;
     const container = document.getElementById('books-container');
+    container.classList.toggle('view-mode-grid', mode === 'grid');
+    container.classList.toggle('view-mode-list', mode === 'list');
 
-    for (const book of booksList) {
-      const card = document.createElement('article');
-      card.className = 'book-card';
-      card.dataset.bookId = book.id;
+    document.getElementById('btn-view-grid').classList.toggle('active', mode === 'grid');
+    document.getElementById('btn-view-list').classList.toggle('active', mode === 'list');
 
-      // Cover container
-      const coverWrapper = document.createElement('div');
-      coverWrapper.className = 'book-cover-wrapper';
-
-      const img = document.createElement('img');
-      img.className = 'book-cover-img';
-      img.alt = `Couverture de ${book.title}`;
-      img.loading = 'lazy';
-
-      // Load cover URL asynchronously
-      CalibreDB.getCoverUrl(book).then((url) => {
-        img.src = url;
-      });
-
-      coverWrapper.appendChild(img);
-
-      // Series badge overlay if part of series
-      if (book.series) {
-        const seriesBadge = document.createElement('span');
-        seriesBadge.className = 'book-badge-series';
-        seriesBadge.textContent = `#${book.series_index}`;
-        coverWrapper.appendChild(seriesBadge);
-      }
-
-      // Format badges overlay (EPUB, PDF...)
-      if (book.formats && book.formats.length > 0) {
-        const fmtsBadge = document.createElement('span');
-        fmtsBadge.className = 'book-badge-formats';
-        fmtsBadge.textContent = book.formats[0];
-        coverWrapper.appendChild(fmtsBadge);
-      }
-
-      // Metadata info
-      const info = document.createElement('div');
-      info.className = 'book-info';
-
-      const title = document.createElement('h3');
-      title.className = 'book-title';
-      title.textContent = book.title;
-
-      const author = document.createElement('p');
-      author.className = 'book-author';
-      author.textContent = book.authors;
-
-      info.appendChild(title);
-      info.appendChild(author);
-
-      if (book.rating) {
-        const ratingEl = document.createElement('div');
-        ratingEl.className = 'book-rating';
-        ratingEl.innerHTML = renderStars(book.rating);
-        info.appendChild(ratingEl);
-      }
-
-      card.appendChild(coverWrapper);
-      card.appendChild(info);
-
-      // Open detail on click
-      card.addEventListener('click', () => {
-        openBookDetail(book.id);
-      });
-
-      container.appendChild(card);
-    }
+    if (save) CalibreStorage.setSetting('view_mode', mode);
   }
 
-  /**
-   * Open Book Details Sheet / Modal
-   */
-  async function openBookDetail(bookId) {
-    state.selectedBookId = Number(bookId);
-    const dialog = document.getElementById('book-detail-dialog');
-    const details = CalibreDB.getBookDetails(bookId);
-    if (!details) return;
-
-    // Fill modal fields
-    document.getElementById('modal-book-title').textContent = details.title;
-    document.getElementById('modal-book-author').textContent = details.authors.map(a => a.name).join(', ') || details.author_sort || 'Auteur inconnu';
-
-    const seriesRow = document.getElementById('modal-series-row');
-    if (details.series && details.series.length > 0) {
-      seriesRow.hidden = false;
-      document.getElementById('modal-book-series').textContent = `${details.series.map(s => s.name).join(', ')} (Livre ${details.series_index})`;
-    } else {
-      seriesRow.hidden = true;
-    }
-
-    const ratingRow = document.getElementById('modal-rating-row');
-    if (details.rating) {
-      ratingRow.hidden = false;
-      document.getElementById('modal-book-rating').innerHTML = renderStars(details.rating);
-    } else {
-      ratingRow.hidden = true;
-    }
-
-    const pubRow = document.getElementById('modal-pub-row');
-    if (details.publishers && details.publishers.length > 0) {
-      pubRow.hidden = false;
-      document.getElementById('modal-book-publisher').textContent = details.publishers.map(p => p.name).join(', ');
-    } else {
-      pubRow.hidden = true;
-    }
-
-    // Tags
-    const tagsContainer = document.getElementById('modal-tags-container');
-    tagsContainer.innerHTML = '';
-    if (details.tags && details.tags.length > 0) {
-      details.tags.forEach((tag) => {
-        const badge = document.createElement('button');
-        badge.type = 'button';
-        badge.className = 'tag-badge';
-        badge.textContent = tag.name;
-        badge.addEventListener('click', () => {
-          dialog.close();
-          filterByTag(tag.id, tag.name);
-        });
-        tagsContainer.appendChild(badge);
-      });
-      tagsContainer.parentElement.hidden = false;
-    } else {
-      tagsContainer.parentElement.hidden = true;
-    }
-
-    // Synopsis / Comment
-    const commentEl = document.getElementById('modal-book-comment');
-    if (details.comment) {
-      commentEl.innerHTML = details.comment;
-      commentEl.hidden = false;
-    } else {
-      commentEl.innerHTML = '<em>Aucune description disponible pour ce livre.</em>';
-      commentEl.hidden = false;
-    }
-
-    // Cover image
-    const coverImg = document.getElementById('modal-book-cover');
-    coverImg.src = await CalibreDB.getCoverUrl(details);
-
-    // Check available files (EPUB, PDF...)
-    const btnReadEpub = document.getElementById('modal-read-epub-btn');
-    const btnReadPdf = document.getElementById('modal-read-pdf-btn');
-    const btnShare = document.getElementById('modal-share-btn');
-    const fileStatusText = document.getElementById('modal-file-status');
-
-    btnReadEpub.hidden = true;
-    btnReadPdf.hidden = true;
-    btnShare.hidden = true;
-
-    // Check if book has EPUB or PDF blob available
-    const epubBlobInfo = await CalibreDB.getBookBlob(bookId, 'EPUB');
-    const pdfBlobInfo = await CalibreDB.getBookBlob(bookId, 'PDF');
-
-    if (epubBlobInfo) {
-      btnReadEpub.hidden = false;
-      btnShare.hidden = false;
-      fileStatusText.textContent = `Fichier EPUB disponible (${formatBytes(epubBlobInfo.blob.size)})`;
-      fileStatusText.className = 'status-available';
-    } else if (pdfBlobInfo) {
-      btnReadPdf.hidden = false;
-      btnShare.hidden = false;
-      fileStatusText.textContent = `Fichier PDF disponible (${formatBytes(pdfBlobInfo.blob.size)})`;
-      fileStatusText.className = 'status-available';
-    } else {
-      const formatsInDb = details.dataFiles.map(d => d.format).join(', ');
-      if (formatsInDb) {
-        fileStatusText.textContent = `Formats enregistrés : ${formatsInDb}. Fichier non encore chargé sur l'appareil.`;
-      } else {
-        fileStatusText.textContent = `Aucun fichier ebook associé.`;
-      }
-      fileStatusText.className = 'status-missing';
-    }
-
-    dialog.showModal();
+  async function setupTheme() {
+    const savedTheme = await CalibreStorage.getSetting('app_theme', 'dark');
+    state.theme = savedTheme;
+    document.documentElement.setAttribute('data-theme', savedTheme);
   }
 
-  /**
-   * Read current book in EPUB reader
-   */
-  async function readCurrentBook() {
-    if (!state.selectedBookId) return;
-    const fileInfo = await CalibreDB.getBookBlob(state.selectedBookId, 'EPUB');
-    if (!fileInfo) {
-      showToast('Fichier EPUB non disponible. Veuillez associer le fichier.', 'warning');
-      return;
-    }
-
-    const details = CalibreDB.getBookDetails(state.selectedBookId);
-    document.getElementById('book-detail-dialog').close();
-    CalibreReader.open(state.selectedBookId, fileInfo.blob, details.title);
+  function cycleTheme() {
+    const themes = ['dark', 'light', 'sepia'];
+    const curIdx = themes.indexOf(state.theme);
+    const nextTheme = themes[(curIdx + 1) % themes.length];
+    state.theme = nextTheme;
+    document.documentElement.setAttribute('data-theme', nextTheme);
+    CalibreStorage.setSetting('app_theme', nextTheme);
+    showToast(`Thème : ${nextTheme === 'dark' ? 'NextGen CaliBlur' : nextTheme === 'light' ? 'Clair' : 'Sépia'}`, 'info');
   }
 
-  /**
-   * Read current book PDF
-   */
-  async function readCurrentBookPdf() {
-    if (!state.selectedBookId) return;
-    const fileInfo = await CalibreDB.getBookBlob(state.selectedBookId, 'PDF');
-    if (!fileInfo) {
-      showToast('Fichier PDF non disponible.', 'warning');
-      return;
-    }
-
-    // Open PDF via object URL
-    const url = URL.createObjectURL(fileInfo.blob);
-    window.open(url, '_blank');
-  }
-
-  /**
-   * Share book file with external Android reading apps (Moon+, ReadEra, etc.)
-   */
-  async function shareCurrentBook() {
-    if (!state.selectedBookId) return;
-    let fileInfo = await CalibreDB.getBookBlob(state.selectedBookId, 'EPUB');
-    if (!fileInfo) fileInfo = await CalibreDB.getBookBlob(state.selectedBookId, 'PDF');
-    if (!fileInfo) return;
-
-    const details = CalibreDB.getBookDetails(state.selectedBookId);
-    const file = new File([fileInfo.blob], fileInfo.filename, { type: fileInfo.blob.type || 'application/epub+zip' });
-
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({
-          files: [file],
-          title: details.title,
-          text: `Lire ${details.title} par ${details.authors.map(a => a.name).join(', ')}`
-        });
-      } catch (err) {
-        if (err.name !== 'AbortError') console.error('Erreur partage:', err);
-      }
-    } else {
-      // Fallback: trigger download
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(fileInfo.blob);
-      a.download = fileInfo.filename;
-      a.click();
-      showToast('Téléchargement du livre lancé.', 'info');
-    }
-  }
-
-  /**
-   * Associate an uploaded ebook file to a book record
-   */
-  async function associateBookFile(bookId, file) {
-    const ext = file.name.split('.').pop().toUpperCase();
-    try {
-      await CalibreStorage.saveBookFile(bookId, ext, file, file.name);
-      showToast(`Fichier ${ext} associé avec succès !`, 'success');
-      // Refresh details modal
-      openBookDetail(bookId);
-      // Refresh card formats
-      loadBooks(true);
-    } catch (err) {
-      console.error('Erreur association fichier:', err);
-      showToast('Erreur association : ' + err.message, 'error');
-    }
-  }
-
-  /**
-   * Filter helpers
-   */
-  function filterByAuthor(id, name) {
-    state.selectedAuthor = { id, name };
-    switchTab('books');
-    loadBooks(true);
-  }
-
-  function filterBySeries(id, name) {
-    state.selectedSeries = { id, name };
-    switchTab('books');
-    loadBooks(true);
-  }
-
-  function filterByTag(id, name) {
-    state.selectedTag = { id, name };
-    switchTab('books');
-    loadBooks(true);
-  }
-
-  function filterByFormat(format) {
-    state.selectedFormat = format;
-    switchTab('books');
-    loadBooks(true);
-  }
-
-  /**
-   * Load Authors tab
-   */
-  function loadAuthorsList() {
-    const container = document.getElementById('authors-list-container');
-    const authors = CalibreDB.getAuthors({ limit: 200 });
-
-    container.innerHTML = '';
-    if (!authors.length) {
-      container.innerHTML = '<div class="empty-list">Aucun auteur trouvé.</div>';
-      return;
-    }
-
-    authors.forEach((a) => {
-      const item = document.createElement('div');
-      item.className = 'list-item-row';
-      item.innerHTML = `
-        <span class="item-name">${a.name}</span>
-        <span class="item-count-badge">${a.book_count} livre${a.book_count > 1 ? 's' : ''}</span>
-      `;
-      item.addEventListener('click', () => filterByAuthor(a.id, a.name));
-      container.appendChild(item);
-    });
-  }
-
-  /**
-   * Load Series tab
-   */
-  function loadSeriesList() {
-    const container = document.getElementById('series-list-container');
-    const series = CalibreDB.getSeries({ limit: 200 });
-
-    container.innerHTML = '';
-    if (!series.length) {
-      container.innerHTML = '<div class="empty-list">Aucune série trouvée.</div>';
-      return;
-    }
-
-    series.forEach((s) => {
-      const item = document.createElement('div');
-      item.className = 'list-item-row';
-      item.innerHTML = `
-        <span class="item-name">${s.name}</span>
-        <span class="item-count-badge">${s.book_count} livre${s.book_count > 1 ? 's' : ''}</span>
-      `;
-      item.addEventListener('click', () => filterBySeries(s.id, s.name));
-      container.appendChild(item);
-    });
-  }
-
-  /**
-   * Load Tags tab
-   */
-  function loadTagsList() {
-    const container = document.getElementById('tags-list-container');
-    const tags = CalibreDB.getTags({ limit: 200 });
-
-    container.innerHTML = '';
-    if (!tags.length) {
-      container.innerHTML = '<div class="empty-list">Aucun tag trouvé.</div>';
-      return;
-    }
-
-    tags.forEach((t) => {
-      const item = document.createElement('div');
-      item.className = 'list-item-row';
-      item.innerHTML = `
-        <span class="item-name">${t.name}</span>
-        <span class="item-count-badge">${t.book_count} livre${t.book_count > 1 ? 's' : ''}</span>
-      `;
-      item.addEventListener('click', () => filterByTag(t.id, t.name));
-      container.appendChild(item);
-    });
-  }
-
-  /**
-   * Handle single metadata.db file upload
-   */
   async function handleDbFileImport(file) {
     if (!file.name.toLowerCase().endsWith('.db')) {
       showToast('Veuillez sélectionner un fichier .db (ex: metadata.db)', 'error');
@@ -870,95 +1072,22 @@ const CalibreApp = (function () {
     try {
       const buffer = await file.arrayBuffer();
       CalibreDB.loadFromArrayBuffer(buffer, file.name);
-
-      // Persist in IndexedDB
       await CalibreStorage.saveMetadataDB(buffer, file.name);
 
       updateDbStatusBadge(`${file.name} chargé`, 'badge-success');
-      showToast(`Base ${file.name} chargée et enregistrée sur votre smartphone !`, 'success');
+      showToast(`Base ${file.name} enregistrée sur votre smartphone !`, 'success');
       refreshStats();
-      switchTab('books');
-      loadBooks(true);
+      switchTab('home');
     } catch (err) {
       console.error('Erreur import base:', err);
       updateDbStatusBadge('Erreur DB', 'badge-danger');
-      showToast('Erreur lors du chargement : ' + err.message, 'error');
-    }
-  }
-
-  /**
-   * Handle Calibre directory pick (showDirectoryPicker or fallback)
-   */
-  async function handleFolderPick() {
-    if ('showDirectoryPicker' in window) {
-      try {
-        const dirHandle = await window.showDirectoryPicker({
-          mode: 'read',
-          startIn: 'documents'
-        });
-
-        updateDbStatusBadge('Analyse du dossier...', 'badge-loading');
-        showToast('Lecture du dossier Calibre...', 'info');
-
-        const filesCount = await CalibreDB.registerDirectoryHandle(dirHandle);
-
-        // Check if metadata.db is in the folder
-        const dbResult = await CalibreDB.findMetadataDbInMap();
-        if (dbResult) {
-          CalibreDB.loadFromArrayBuffer(dbResult.buffer, 'metadata.db');
-          await CalibreStorage.saveMetadataDB(dbResult.buffer, 'metadata.db');
-          updateDbStatusBadge('Dossier Calibre connecté', 'badge-success');
-          showToast(`Bibliothèque connectée ! ${filesCount} fichiers indexés.`, 'success');
-          refreshStats();
-          switchTab('books');
-          loadBooks(true);
-        } else {
-          showToast('metadata.db non trouvé à la racine du dossier.', 'warning');
-        }
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          console.error('Erreur showDirectoryPicker:', err);
-          // Fallback to webkitdirectory file input
-          document.getElementById('input-folder').click();
-        }
-      }
-    } else {
-      // Trigger fallback input
-      document.getElementById('input-folder').click();
-    }
-  }
-
-  async function handleFolderFiles(files) {
-    updateDbStatusBadge('Analyse des fichiers...', 'badge-loading');
-    showToast('Indexation des fichiers du dossier...', 'info');
-
-    try {
-      const count = CalibreDB.registerFileList(files);
-      const dbResult = await CalibreDB.findMetadataDbInMap();
-
-      if (dbResult) {
-        CalibreDB.loadFromArrayBuffer(dbResult.buffer, 'metadata.db');
-        await CalibreStorage.saveMetadataDB(dbResult.buffer, 'metadata.db');
-        updateDbStatusBadge('Dossier Calibre connecté', 'badge-success');
-        showToast(`Dossier connecté ! ${count} fichiers détectés.`, 'success');
-        refreshStats();
-        switchTab('books');
-        loadBooks(true);
-      } else {
-        showToast('metadata.db introuvable dans les fichiers sélectionnés.', 'warning');
-      }
-    } catch (err) {
-      console.error('Erreur lecture fichiers dossier:', err);
       showToast('Erreur : ' + err.message, 'error');
     }
   }
 
-  /**
-   * Load bundled demo database
-   */
   async function loadDemoDatabase() {
-    updateDbStatusBadge('Chargement démo...', 'badge-loading');
-    showToast('Chargement de la bibliothèque de démonstration...', 'info');
+    updateDbStatusBadge('Chargement...', 'badge-loading');
+    showToast('Chargement de la bibliothèque d\'exemple...', 'info');
 
     try {
       const resp = await fetch('./sample-metadata.db');
@@ -969,19 +1098,14 @@ const CalibreApp = (function () {
       await CalibreStorage.saveMetadataDB(buffer, 'sample-metadata.db');
 
       updateDbStatusBadge('Démo chargée', 'badge-success');
-      showToast('Bibliothèque d\'exemple chargée avec succès !', 'success');
+      showToast('Bibliothèque d\'exemple prête !', 'success');
       refreshStats();
-      switchTab('books');
-      loadBooks(true);
+      switchTab('home');
     } catch (err) {
-      console.error('Erreur démo:', err);
-      showToast('Impossible de charger la démo : ' + err.message, 'error');
+      showToast('Erreur démo : ' + err.message, 'error');
     }
   }
 
-  /**
-   * Export current metadata.db file
-   */
   function exportDatabase() {
     try {
       const data = CalibreDB.export();
@@ -990,38 +1114,22 @@ const CalibreApp = (function () {
       a.href = URL.createObjectURL(blob);
       a.download = CalibreDB.getDbName() || 'metadata.db';
       a.click();
-      showToast('Export de la base téléchargé.', 'success');
+      showToast('Export téléchargé.', 'success');
     } catch (err) {
       showToast('Erreur export : ' + err.message, 'error');
     }
   }
 
-  /**
-   * Reset / Clear local library
-   */
   async function clearLibrary() {
-    if (!confirm('Voulez-vous vraiment effacer la base de données et les fichiers locaux du smartphone ?')) {
-      return;
-    }
-
-    try {
-      await CalibreStorage.clearAll();
-      CalibreDB.close();
-      updateDbStatusBadge('Aucune base chargée', 'badge-warning');
-      state.books = [];
-      state.totalBooks = 0;
-      document.getElementById('books-container').innerHTML = '';
-      showEmptyLibraryBanner();
-      refreshStats();
-      showToast('Stockage local réinitialisé.', 'info');
-    } catch (err) {
-      showToast('Erreur : ' + err.message, 'error');
-    }
+    if (!confirm('Voulez-vous réinitialiser le stockage local ?')) return;
+    await CalibreStorage.clearAll();
+    CalibreDB.close();
+    updateDbStatusBadge('Aucune base chargée', 'badge-warning');
+    updateLocalDirectoryUI();
+    showToast('Stockage local réinitialisé.', 'info');
+    switchTab('settings');
   }
 
-  /**
-   * Refresh Stats Display
-   */
   function refreshStats() {
     const stats = CalibreDB.getStats();
     if (!stats) return;
@@ -1029,29 +1137,14 @@ const CalibreApp = (function () {
     const statsEl = document.getElementById('stats-summary');
     if (statsEl) {
       statsEl.innerHTML = `
-        <div class="stat-card">
-          <div class="stat-number">${stats.books.toLocaleString('fr-FR')}</div>
-          <div class="stat-label">Livres</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-number">${stats.authors.toLocaleString('fr-FR')}</div>
-          <div class="stat-label">Auteurs</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-number">${stats.series.toLocaleString('fr-FR')}</div>
-          <div class="stat-label">Séries</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-number">${stats.tags.toLocaleString('fr-FR')}</div>
-          <div class="stat-label">Tags</div>
-        </div>
+        <div class="stat-card"><div class="stat-number">${stats.books.toLocaleString('fr-FR')}</div><div class="stat-label">Livres</div></div>
+        <div class="stat-card"><div class="stat-number">${stats.authors.toLocaleString('fr-FR')}</div><div class="stat-label">Auteurs</div></div>
+        <div class="stat-card"><div class="stat-number">${stats.series.toLocaleString('fr-FR')}</div><div class="stat-label">Séries</div></div>
+        <div class="stat-card"><div class="stat-number">${stats.tags.toLocaleString('fr-FR')}</div><div class="stat-label">Tags</div></div>
       `;
     }
   }
 
-  /**
-   * Refresh Storage Usage info in settings
-   */
   async function refreshStorageInfo() {
     refreshStats();
     const infoEl = document.getElementById('storage-usage-info');
@@ -1060,20 +1153,15 @@ const CalibreApp = (function () {
     try {
       const estimate = await CalibreStorage.getStorageEstimate();
       const dbSaved = await CalibreStorage.getMetadataDB();
-      const files = await CalibreStorage.getAllBookFiles();
-
       const usageMb = (estimate.usage / (1024 * 1024)).toFixed(1);
       const quotaMb = (estimate.quota / (1024 * 1024)).toFixed(0);
 
       infoEl.innerHTML = `
-        <p><strong>Fichier DB actif :</strong> ${CalibreDB.getDbName() || 'Aucun'}</p>
-        <p><strong>Taille de la base :</strong> ${dbSaved ? formatBytes(dbSaved.size) : '0 B'}</p>
-        <p><strong>Livres stockés hors-ligne :</strong> ${files.length} fichiers</p>
-        <p><strong>Espace navigateur utilisé :</strong> ${usageMb} Mo sur ${quotaMb} Mo alloués</p>
+        <p><strong>Base active :</strong> ${CalibreDB.getDbName() || 'Aucune'}</p>
+        <p><strong>Taille base :</strong> ${dbSaved ? formatBytes(dbSaved.size) : '0 B'}</p>
+        <p><strong>Stockage navigateur utilisé :</strong> ${usageMb} Mo sur ${quotaMb} Mo</p>
       `;
-    } catch (e) {
-      infoEl.textContent = 'Impossible de calculer l\'espace de stockage.';
-    }
+    } catch (e) {}
   }
 
   function updateDbStatusBadge(text, className) {
@@ -1088,17 +1176,17 @@ const CalibreApp = (function () {
     container.innerHTML = `
       <div class="empty-state-card">
         <div class="empty-state-icon">📚</div>
-        <h2>Bienvenue sur Calibre-Web PWA</h2>
-        <p>Pour commencer à parcourir vos livres sur votre smartphone :</p>
+        <h2>Calibre-Web NextGen PWA</h2>
+        <p>Configurez votre bibliothèque pour commencer à lire vos livres hors-ligne :</p>
         <div class="empty-state-actions">
-          <button class="btn btn-primary" onclick="document.getElementById('input-file-db').click()">
-            🗄️ Charger un fichier metadata.db
+          <button class="btn btn-primary" onclick="CalibreApp.defineLocalDirectory()">
+            📁 Définir le dossier local des livres
           </button>
-          <button class="btn btn-secondary" onclick="CalibreApp.handleFolderPick()">
-            📁 Sélectionner le dossier Calibre
+          <button class="btn btn-secondary" onclick="document.getElementById('input-file-db').click()">
+            🗄️ Charger metadata.db
           </button>
           <button class="btn btn-ghost" onclick="CalibreApp.loadDemoDatabase()">
-            🚀 Essayer avec la bibliothèque exemple
+            🚀 Essayer la bibliothèque exemple
           </button>
         </div>
       </div>
@@ -1116,20 +1204,21 @@ const CalibreApp = (function () {
     }, 3200);
   }
 
-  // Public API
   return {
     init,
     switchTab,
-    handleFolderPick,
+    defineLocalDirectory,
+    rescanLocalDirectory,
+    disconnectLocalDirectory,
     loadDemoDatabase,
-    filterByAuthor,
-    filterBySeries,
-    filterByTag,
-    filterByFormat
+    openBookDetail,
+    closeShelfDetail,
+    closeAuthorDetail,
+    closeSeriesDetail,
+    filterByTag
   };
 })();
 
-// Bootstrap app on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
   CalibreApp.init();
 });
