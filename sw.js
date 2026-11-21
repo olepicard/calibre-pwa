@@ -3,7 +3,7 @@
  * Provides offline caching for static assets, WASM binary, and offline library functionality.
  */
 
-const CACHE_NAME = 'calibre-web-pwa-v1.2';
+const CACHE_NAME = 'calibre-web-pwa-v2.0';
 
 const PRECACHE_ASSETS = [
   './',

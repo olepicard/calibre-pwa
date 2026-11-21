@@ -261,23 +261,38 @@ const CalibreReader = (function () {
   }
 
   /**
-   * Render Table of Contents
+   * Render Table of Contents with optional search filter
    */
-  function renderToc(items, listEl) {
+  function renderToc(items, listEl, filterQuery = '') {
     listEl.innerHTML = '';
     if (!items || items.length === 0) {
       listEl.innerHTML = '<li class="empty-item">Aucun sommaire disponible</li>';
       return;
     }
 
+    const q = (filterQuery || '').trim().toLowerCase();
+
     items.forEach((item) => {
+      const labelText = item.label ? item.label.trim() : 'Chapitre';
+      const matchesSelf = !q || labelText.toLowerCase().includes(q);
+      const matchingSubs = (item.subitems || []).filter((s) =>
+        !q || (s.label && s.label.toLowerCase().includes(q))
+      );
+
+      if (!matchesSelf && matchingSubs.length === 0) return;
+
       const li = document.createElement('li');
       li.className = 'toc-item';
-      li.textContent = item.label ? item.label.trim() : 'Chapitre';
+      li.dataset.href = item.href || '';
+      li.textContent = labelText;
       li.addEventListener('click', () => {
         if (currentRendition && item.href) {
           currentRendition.display(item.href);
-          toggleToc(false);
+          const chEl = document.getElementById('reader-chapter-title');
+          if (chEl) chEl.textContent = labelText;
+          listEl.querySelectorAll('.toc-item').forEach((n) => n.classList.remove('active'));
+          li.classList.add('active');
+          if (window.innerWidth < 768) toggleToc(false);
         }
       });
       listEl.appendChild(li);
@@ -286,10 +301,19 @@ const CalibreReader = (function () {
       if (item.subitems && item.subitems.length > 0) {
         const subUl = document.createElement('ul');
         subUl.className = 'toc-sublist';
-        renderToc(item.subitems, subUl);
-        listEl.appendChild(subUl);
+        renderToc(q ? matchingSubs : item.subitems, subUl, '');
+        if (subUl.children.length > 0) {
+          listEl.appendChild(subUl);
+        }
       }
     });
+  }
+
+  function filterToc(query) {
+    const tocList = document.getElementById('reader-toc-list');
+    if (tocList) {
+      renderToc(currentToc, tocList, query);
+    }
   }
 
   /**
@@ -318,8 +342,12 @@ const CalibreReader = (function () {
       if (currentRendition) currentRendition.prev();
     },
 
-    toggleToc() {
-      toggleToc();
+    toggleToc(force) {
+      toggleToc(force);
+    },
+
+    filterToc(query) {
+      filterToc(query);
     },
 
     setTheme(themeName) {

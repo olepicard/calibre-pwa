@@ -1,82 +1,107 @@
 /**
- * Calibre-Web NextGen PWA - Stylesheet
- * Faithfully ports the "caliBlur, elevated" design tokens and responsive UX
- * from Calibre-Web-NextGen for Android smartphones, tablets, and desktop.
+ * calibre PWA (Android & Desktop) - Stylesheet
+ * Faithfully reproduces the official Calibre Desktop & Calibre Content Server UI
+ * (https://calibre-ebook.com/fr/demo#screenshots) for Android smartphones.
  */
 
 @layer reset, base, components, utilities;
 
 :root {
   color-scheme: dark;
+  --target-size: 24px;
 
-  /* Calibre-Web NextGen CaliBlur Elevated Tokens */
-  --bg:            #141c24;   /* page base */
-  --bg-glow:       #1a2733;   /* top atmospheric gradient */
-  --surface-1:     #1b2530;   /* cards, header, bars */
-  --surface-2:     #222e3a;   /* raised, hover, sheet */
-  --surface-3:     #2a3845;   /* inputs, wells, badges */
-  --border:        #2c3a47;   /* hairline separators */
-  --border-strong: #3a4a59;
+  /* Official Calibre Night Mode & Content Server Espresso Palette (shot6_night_mode.png) */
+  --calibre-topbar:      #34302d;
+  --calibre-topbar-text: #f5f2eb;
+  --calibre-select-bg:   #3daee9;
+  --calibre-select-row:  #2b73a8;
+  --calibre-link:        #58a6ff;
 
-  /* Amber Accent (signature caliBlur) */
-  --accent:        #cc7b19;
-  --accent-hover:  #e0902a;
-  --accent-press:  #b86d12;
-  --accent-soft:   rgba(204, 123, 25, 0.14);
-  --accent-ring:   rgba(224, 144, 42, 0.55);
-  --accent-text:   #e6a13f;   /* accessible amber on dark */
-  --on-accent:     #1a1206;
+  --bg:            #1e1e1e;   /* Calibre dark canvas */
+  --bg-glow:       #252525;
+  --surface-1:     #262626;   /* panels, cards, toolbar */
+  --surface-2:     #2f2f2f;   /* raised, alternate table rows */
+  --surface-3:     #383838;   /* inputs, badges, pills */
+  --border:        #3c3c3c;
+  --border-strong: #525252;
 
-  /* Warm paper text */
+  /* Calibre Blue & Amber Accents */
+  --accent:        #2980b9;
+  --accent-hover:  #3daee9;
+  --accent-press:  #1f6391;
+  --accent-soft:   rgba(61, 174, 233, 0.16);
+  --accent-ring:   rgba(61, 174, 233, 0.55);
+  --accent-text:   #58a6ff;
+  --on-accent:     #ffffff;
+
+  /* Text */
   --text:          #ece8e1;
-  --text-muted:    #9aa7b2;
-  --text-faint:    #94a1af;
+  --text-muted:    #a8a49e;
+  --text-faint:    #8c8882;
 
   /* Status */
-  --danger:        #e0685f;
-  --danger-soft:   rgba(224, 104, 95, 0.14);
-  --success:       #6cc08a;
-  --success-soft:  rgba(108, 192, 138, 0.14);
-  --star-color:    #e0902a;
+  --danger:        #e05d54;
+  --danger-soft:   rgba(224, 93, 84, 0.14);
+  --success:       #5cb85c;
+  --success-soft:  rgba(92, 184, 92, 0.14);
+  --star-color:    #f5b014;
 
   /* Radii & Shadows */
   --radius-xs:     4px;
   --radius-sm:     6px;
   --radius-md:     10px;
-  --radius-lg:     16px;
-  --shadow-sm:     0 2px 4px rgba(0, 0, 0, 0.25);
-  --shadow-md:     0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-lg:     0 8px 24px rgba(0, 0, 0, 0.5);
+  --radius-lg:     14px;
+  --shadow-sm:     0 2px 5px rgba(0, 0, 0, 0.28);
+  --shadow-md:     0 4px 14px rgba(0, 0, 0, 0.38);
+  --shadow-lg:     0 10px 28px rgba(0, 0, 0, 0.55);
 
   --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Light Theme alternative */
+@media (pointer: coarse) {
+  :root {
+    --target-size: 44px;
+  }
+}
+
+/* Official Calibre Content Server & Desktop Day Mode (shot1_main.png, shot4_mobile_content_server.png, shot5_web_content_server.png) */
 [data-theme="light"] {
   color-scheme: light;
-  --bg:            #f5f2eb;
-  --bg-glow:       #ffffff;
+  --calibre-topbar:      #34302d;
+  --calibre-topbar-text: #ffffff;
+  --calibre-select-bg:   #3daee9;
+  --calibre-select-row:  #3597d4;
+  --calibre-link:        #1d4ed8;
+
+  --bg:            #f6f3e9;   /* Authentic Calibre Content Server cream canvas */
+  --bg-glow:       #faf8f1;
   --surface-1:     #ffffff;
-  --surface-2:     #ebe6dc;
-  --surface-3:     #e2dcd0;
-  --border:        #d9d1c3;
-  --border-strong: #bfb5a3;
+  --surface-2:     #efece2;
+  --surface-3:     #e4dfd2;
+  --border:        #d5cfc0;
+  --border-strong: #b8b09e;
 
-  --accent:        #b86510;
-  --accent-hover:  #d07515;
-  --accent-text:   #965008;
-  --accent-soft:   rgba(184, 101, 16, 0.12);
+  --accent:        #2574a9;
+  --accent-hover:  #3daee9;
+  --accent-text:   #1d4ed8;
+  --accent-soft:   rgba(37, 116, 169, 0.12);
 
-  --text:          #1f2429;
-  --text-muted:    #58626c;
-  --text-faint:    #7b8793;
+  --text:          #1f1d1a;
+  --text-muted:    #5a554c;
+  --text-faint:    #7a746a;
 }
 
 /* Sepia Theme */
 [data-theme="sepia"] {
   color-scheme: light;
+  --calibre-topbar:      #3d2e1e;
+  --calibre-topbar-text: #fcf5e5;
+  --calibre-select-bg:   #8b572a;
+  --calibre-select-row:  #8b572a;
+  --calibre-link:        #6e411b;
+
   --bg:            #f4ecd8;
   --bg-glow:       #fcf7ea;
   --surface-1:     #fcf5e5;
@@ -106,15 +131,46 @@
   display: none !important;
 }
 
+html {
+  scroll-padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+}
+
 html, body {
   font-family: var(--font-family);
   background-color: var(--bg);
-  background-image: radial-gradient(circle at 50% 0%, var(--bg-glow) 0%, var(--bg) 80%);
-  background-repeat: no-repeat;
   color: var(--text);
-  min-height: 100vh;
+  min-block-size: 100vh;
   touch-action: manipulation;
-  overflow-x: hidden;
+  overflow-wrap: break-word;
+}
+
+:where(h1, h2, h3) {
+  text-wrap: balance;
+}
+
+:where(p, li) {
+  text-wrap: pretty;
+}
+
+:where(a, code) {
+  overflow-wrap: anywhere;
+}
+
+img, video {
+  max-inline-size: 100%;
+  block-size: auto;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* App Header */
@@ -122,10 +178,8 @@ html, body {
   position: sticky;
   top: 0;
   z-index: 100;
-  background-color: rgba(20, 28, 36, 0.95);
-  backdrop-filter: blur(12px);
+  background-color: var(--surface-1);
   border-bottom: 1px solid var(--border);
-  padding: calc(var(--safe-top) + 8px) 16px 10px 16px;
   box-shadow: var(--shadow-sm);
 }
 
@@ -1489,4 +1543,1160 @@ dialog::backdrop {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* =========================================================================
+   CALIBRE OFFICIAL UI & CONTENT SERVER STYLES (https://calibre-ebook.com/fr/demo#screenshots)
+   ========================================================================= */
+
+/* 1. Calibre Content Server Espresso Top Bar (shot4 & shot5) */
+.calibre-server-topbar {
+  background-color: var(--calibre-topbar);
+  color: var(--calibre-topbar-text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(var(--safe-top) + 6px) 12px 6px 12px;
+  min-block-size: 48px;
+  gap: 8px;
+}
+
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.topbar-left {
+  min-inline-size: 0;
+  flex: 1;
+}
+
+.topbar-home-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 1.05rem;
+  min-inline-size: 0;
+}
+
+.topbar-library-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-inline-size: 42vw;
+}
+
+.topbar-icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: #f5f2eb;
+  cursor: pointer;
+  font-size: 1.1rem;
+  transition: background 0.15s ease;
+}
+
+.topbar-icon-btn:hover,
+.topbar-icon-btn.active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.btn-xs {
+  padding: 4px 10px;
+  font-size: 0.76rem;
+}
+
+.btn-sm {
+  padding: 7px 12px;
+  font-size: 0.82rem;
+}
+
+/* 2. Calibre Classic Iconic Action Toolbar (shot1_main.png & shot6_night_mode.png) */
+.calibre-action-toolbar {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px 10px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.calibre-action-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.calibre-tool-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-inline-size: 68px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.calibre-tool-btn:hover,
+.calibre-tool-btn.active {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.calibre-tool-icon {
+  font-size: 1.35rem;
+  line-height: 1;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+}
+
+.plus-badge {
+  font-size: 0.75rem;
+  font-weight: 900;
+  color: #4ade80;
+  margin-left: -2px;
+}
+
+.calibre-tool-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* 3. Calibre Search & Virtual Library Bar (shot1 & shot6) */
+.calibre-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.btn-virtual-lib,
+.btn-calibre-search,
+.btn-saved-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.btn-virtual-lib:hover,
+.btn-calibre-search:hover,
+.btn-saved-search:hover {
+  background: var(--surface-3);
+  border-color: var(--accent);
+}
+
+.calibre-search-row .search-bar-container {
+  flex: 1;
+  min-inline-size: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-gear-icon {
+  position: absolute;
+  left: 9px;
+  font-size: 0.85rem;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.calibre-search-row .search-input {
+  width: 100%;
+  padding: 7px 30px 7px 30px;
+  font-size: 0.84rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.calibre-search-row .search-input:focus {
+  outline: 2px solid var(--calibre-select-bg);
+  border-color: transparent;
+}
+
+@media (max-width: 640px) {
+  .vl-btn-text,
+  .search-btn-label,
+  .saved-search-label {
+    display: none;
+  }
+}
+
+/* 4. Calibre Virtual Library Tabs Bar (All books | Adventure [x]) */
+.virtual-library-tabs {
+  display: flex;
+  align-items: stretch;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.virtual-library-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.vl-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: none;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.vl-tab.active {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 700;
+  box-shadow: inset 0 2px 0 var(--calibre-select-bg);
+}
+
+.vl-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: #e05d54;
+  font-weight: 900;
+  font-size: 0.75rem;
+}
+
+.vl-tab-close:hover {
+  background: rgba(224, 93, 84, 0.2);
+}
+
+/* 5. Controls Bar refinements */
+.controls-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-tag-chip:hover {
+  border-color: var(--calibre-select-bg);
+}
+
+.view-mode-group {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+}
+
+.view-mode-group .view-mode-btn {
+  border: none;
+  border-radius: 0;
+  border-right: 1px solid var(--border);
+}
+
+.view-mode-group .view-mode-btn:last-child {
+  border-right: none;
+}
+
+/* 6. Calibre 3D Cover Browser ("Cover Flow" - shot1_main.png & shot6_night_mode.png) */
+.coverflow-section {
+  background: radial-gradient(ellipse at 50% 35%, #222222 0%, #050505 78%);
+  border-bottom: 1px solid var(--border-strong);
+  padding: 12px 8px 10px 8px;
+  color: #ffffff;
+  user-select: none;
+  overflow: hidden;
+  position: relative;
+}
+
+.coverflow-stage {
+  position: relative;
+  height: 175px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  perspective: 900px;
+}
+
+.coverflow-track {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-style: preserve-3d;
+}
+
+.coverflow-item {
+  position: absolute;
+  width: 104px;
+  height: 152px;
+  border-radius: 3px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.85);
+  transition: transform 0.32s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.32s ease, z-index 0s;
+  cursor: pointer;
+  background: #141c24;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  -webkit-box-reflect: below 3px linear-gradient(transparent 65%, rgba(255, 255, 255, 0.22));
+}
+
+.coverflow-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 2px;
+  display: block;
+}
+
+.coverflow-item.is-center {
+  border-color: rgba(255, 255, 255, 0.65);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.95), 0 0 18px rgba(61, 174, 233, 0.35);
+}
+
+.coverflow-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
+  width: 34px;
+  height: 54px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(25, 25, 25, 0.72);
+  color: #ffffff;
+  font-size: 1.5rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.coverflow-nav:hover {
+  background: rgba(61, 174, 233, 0.75);
+}
+
+.coverflow-prev { left: 6px; }
+.coverflow-next { right: 6px; }
+
+.coverflow-caption {
+  text-align: center;
+  margin-top: 8px;
+  position: relative;
+  z-index: 25;
+}
+
+.coverflow-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #ffffff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-inline-size: 88vw;
+  margin: 0 auto;
+}
+
+.coverflow-rating {
+  font-size: 0.92rem;
+  color: #ffffff;
+  letter-spacing: 2px;
+  min-block-size: 1.1rem;
+}
+
+/* 7. Calibre Content Server 3-Column Mobile Cover Grid (shot4_mobile_content_server.png) */
+#section-books,
+#shelf-detail-view,
+#author-detail-view,
+#series-detail-view {
+  container: bookcatalog / inline-size;
+}
+
+.view-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 12px;
+  padding: 4px 2px;
+}
+
+@container bookcatalog (inline-size > 34rem) {
+  .view-mode-grid {
+    grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+    gap: 18px 16px;
+  }
+}
+
+@container bookcatalog (inline-size > 54rem) {
+  .view-mode-grid {
+    grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+    gap: 22px 20px;
+  }
+}
+
+.book-card.is-selected {
+  outline: 2px solid var(--calibre-select-bg);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 8. Calibre Desktop Sortable Multi-Column Table (shot1_main.png & shot6_night_mode.png) */
+.calibre-table-region {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--surface-1);
+}
+
+.calibre-books-table {
+  width: 100%;
+  min-inline-size: 640px;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  text-align: left;
+}
+
+.calibre-books-table thead th {
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 700;
+  border-bottom: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border);
+  padding: 7px 10px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.calibre-books-table thead th:has(> button) {
+  padding: 0;
+}
+
+.calibre-books-table thead th > button {
+  width: 100%;
+  min-block-size: 32px;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.calibre-books-table thead th > button:hover {
+  background: var(--surface-3);
+}
+
+.calibre-books-table thead th > button:focus-visible {
+  outline: 2px solid var(--calibre-select-bg);
+  outline-offset: -2px;
+}
+
+.calibre-books-table thead th[aria-sort="ascending"] > button::after {
+  content: "▲";
+  font-size: 0.65rem;
+  opacity: 0.85;
+}
+
+.calibre-books-table thead th[aria-sort="descending"] > button::after {
+  content: "▼";
+  font-size: 0.65rem;
+  opacity: 0.85;
+}
+
+.calibre-books-table thead th[aria-sort] > button {
+  font-style: italic;
+}
+
+.calibre-books-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.08s ease;
+}
+
+.calibre-books-table tbody tr:nth-child(even) {
+  background: rgba(128, 128, 128, 0.06);
+}
+
+.calibre-books-table tbody tr:hover {
+  background: var(--accent-soft);
+}
+
+.calibre-books-table tbody tr.is-selected {
+  background: var(--calibre-select-row) !important;
+  color: #ffffff !important;
+}
+
+.calibre-books-table tbody tr.is-selected td {
+  color: #ffffff !important;
+}
+
+.calibre-books-table td {
+  padding: 6px 10px;
+  border-right: 1px solid var(--border);
+  max-inline-size: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.calibre-books-table td.col-num {
+  text-align: right;
+  color: var(--text-muted);
+  width: 44px;
+  font-variant-numeric: tabular-nums;
+}
+
+.calibre-books-table td.col-title {
+  font-weight: 600;
+}
+
+/* 9. Calibre Tag Browser Drawer (navigation-drawer guide implementation) */
+.Drawer {
+  --drawer-width: min(21em, 84dvw, 100dvw - 24px);
+  --drawer-backdrop: 0;
+  inset: 0;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  overflow: visible;
+}
+
+.Drawer::backdrop {
+  background: #000000;
+  opacity: calc(var(--drawer-backdrop) / 1.6);
+}
+
+.Drawer-scroller {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--drawer-width) 100%;
+  overflow-x: scroll;
+  overscroll-behavior: none;
+  scrollbar-width: none;
+  scroll-snap-type: x mandatory;
+}
+
+.Drawer-scroller::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .Drawer-scroller {
+    scroll-behavior: smooth;
+  }
+}
+
+.Drawer-scroller::after {
+  content: '';
+  scroll-snap-align: end;
+  scroll-initial-target: nearest;
+}
+
+.Drawer-sheet {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100svh;
+  background: var(--surface-1);
+  color: var(--text);
+  border-right: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+  overflow-y: auto;
+  scroll-snap-align: start;
+  scrollbar-width: thin;
+}
+
+@supports (animation-timeline: scroll()) {
+  .Drawer {
+    timeline-scope: --drawer-fade;
+    animation: fade-drawer-backdrop linear both;
+    animation-timeline: --drawer-fade;
+  }
+
+  .Drawer-scroller {
+    scroll-timeline: --drawer-fade x;
+  }
+
+  @property --drawer-backdrop {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 0;
+  }
+
+  @keyframes fade-drawer-backdrop {
+    0% { --drawer-backdrop: 1 }
+    100% { --drawer-backdrop: 0 }
+  }
+}
+
+.tag-drawer-header {
+  background: var(--calibre-topbar);
+  color: #ffffff;
+  padding: calc(var(--safe-top) + 10px) 14px 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+
+.tag-drawer-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tag-drawer-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.tag-drawer-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.tag-drawer-subtitle {
+  font-size: 0.72rem;
+  opacity: 0.8;
+}
+
+.tag-drawer-close-btn {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  border: none;
+}
+
+.tag-browser-tree {
+  padding: 8px 6px;
+  overflow-y: auto;
+}
+
+.tag-category-details {
+  border-bottom: 1px solid var(--border);
+}
+
+.tag-category-summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 10px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.88rem;
+  border-radius: var(--radius-xs);
+  user-select: none;
+}
+
+.tag-category-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tag-category-summary:hover {
+  background: var(--surface-2);
+}
+
+.tag-cat-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tag-cat-arrow {
+  font-size: 0.7rem;
+  transition: transform 0.15s ease;
+  color: var(--text-muted);
+}
+
+details[open] > .tag-category-summary .tag-cat-arrow {
+  transform: rotate(90deg);
+}
+
+.tag-cat-count {
+  font-size: 0.74rem;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  padding: 1px 7px;
+  border-radius: 10px;
+}
+
+.tag-category-items {
+  list-style: none;
+  padding: 2px 0 6px 22px;
+  max-block-size: 240px;
+  overflow-y: auto;
+}
+
+.tag-tree-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.82rem;
+  text-align: left;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+
+.tag-tree-item:hover {
+  background: var(--accent-soft);
+  color: var(--calibre-link);
+}
+
+.tag-tree-item-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-inline-size: 180px;
+}
+
+.tag-tree-item-count {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.tag-drawer-footer {
+  padding: 10px 12px calc(var(--safe-bottom) + 10px) 12px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+}
+
+.tag-find-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  padding: 5px 8px;
+}
+
+.tag-find-box input {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.82rem;
+  width: 100%;
+  outline: none;
+}
+
+/* 10. Calibre Content Server Book Details Sheet (shot5_web_content_server.png) */
+.calibre-detail-sheet {
+  padding: 0 !important;
+  overflow: hidden;
+  max-inline-size: 860px !important;
+}
+
+.calibre-detail-topbar {
+  background: var(--calibre-topbar);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  gap: 10px;
+}
+
+.detail-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-inline-size: 0;
+  flex: 1;
+}
+
+.detail-topbar-title {
+  font-weight: 700;
+  font-size: 1.05rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.detail-topbar-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-xs);
+  border: none;
+  background: transparent;
+  color: #ffffff;
+  font-size: 1.05rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.detail-topbar-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.calibre-detail-body {
+  display: grid;
+  grid-template-columns: 1fr 240px;
+  gap: 20px;
+  padding: 16px;
+  max-block-size: calc(88vh - 54px);
+  overflow-y: auto;
+}
+
+@media (max-width: 680px) {
+  .calibre-detail-body {
+    grid-template-columns: 1fr;
+  }
+  .calibre-detail-cover-col {
+    order: -1;
+    max-inline-size: 210px;
+    margin: 0 auto;
+  }
+}
+
+.calibre-detail-pills {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 0 !important;
+  margin-bottom: 14px;
+}
+
+.calibre-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border-radius: 22px;
+  border: 1px solid #2b2724;
+  background: linear-gradient(180deg, #524d49 0%, #34302d 100%);
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
+}
+
+.calibre-pill-btn:hover {
+  background: linear-gradient(180deg, #635d58 0%, #423d39 100%);
+}
+
+.calibre-pill-primary {
+  background: linear-gradient(180deg, #3daee9 0%, #2574a9 100%);
+  border-color: #1c5a85;
+}
+
+.calibre-pill-outline {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.calibre-meta-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  font-size: 0.88rem;
+  margin-bottom: 12px;
+}
+
+.calibre-meta-item {
+  display: contents;
+}
+
+.calibre-meta-item dt {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.calibre-meta-item dd {
+  color: var(--text);
+  min-inline-size: 0;
+}
+
+.calibre-meta-link {
+  color: var(--calibre-link);
+  text-decoration: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.calibre-meta-link:hover {
+  text-decoration: underline;
+}
+
+.detail-cover-wrapper {
+  position: relative;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--border);
+}
+
+.cover-overlay-nav {
+  position: absolute;
+  top: 10px;
+  width: 34px;
+  height: 36px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(40, 40, 40, 0.75);
+  color: #ffffff;
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+}
+
+.cover-overlay-nav:hover {
+  background: rgba(61, 174, 233, 0.9);
+}
+
+.cover-overlay-prev { left: 10px; }
+.cover-overlay-next { right: 10px; }
+
+.calibre-summary-heading {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+/* 11. Metadata Editor Modal Form */
+#edit-metadata-dialog {
+  margin: auto;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  width: 94vw;
+  max-width: 560px;
+}
+
+#edit-metadata-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.edit-metadata-form {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface-1);
+  color: var(--text);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-group label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.88rem;
+}
+
+.form-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.edit-meta-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+/* 12. Built-in Viewer Workspace & TOC Search (shot2_viewer.png) */
+.reader-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-inline-size: 0;
+}
+
+.reader-titles {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.reader-chapter-subtitle {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reader-workspace {
+  flex: 1;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+}
+
+.toc-item.active {
+  font-weight: 700;
+  font-style: italic;
+  color: var(--calibre-link);
+  background: var(--accent-soft);
+}
+
+.reader-toc-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+}
+
+.reader-toc-search-bar input {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* 13. Calibre Desktop Status Footer */
+.calibre-status-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(56px + var(--safe-bottom));
+  height: 26px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  z-index: 85;
+}
+
+.status-footer-left,
+.status-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-brand {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.status-layout-btn {
+  background: transparent;
+  border: none;
+  color: var(--calibre-link);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.main-content {
+  padding-bottom: calc(95px + var(--safe-bottom)) !important;
 }

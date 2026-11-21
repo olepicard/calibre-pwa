@@ -527,6 +527,75 @@ const CalibreDB = (function () {
     },
 
     /**
+     * Parse Calibre advanced search query syntax:
+     * e.g., author:"Jules Verne" tag:Science format:EPUB rating:>=4 series:Voyages
+     */
+    parseCalibreSearch(rawSearch, whereClauses, params) {
+      if (!rawSearch || !rawSearch.trim()) return;
+      let remaining = rawSearch.trim();
+
+      // Match key:"value" or key:value tokens
+      const tokenRegex = /\b(author|authors|title|tag|tags|series|format|formats|publisher|rating|lang|language|id):(?:"([^"]+)"|([^\s]+))/gi;
+      let match;
+      while ((match = tokenRegex.exec(rawSearch)) !== null) {
+        const field = match[1].toLowerCase();
+        const val = (match[2] || match[3] || '').trim();
+        remaining = remaining.replace(match[0], ' ');
+        if (!val) continue;
+
+        if (field === 'author' || field === 'authors') {
+          whereClauses.push('(b.author_sort LIKE ? OR EXISTS (SELECT 1 FROM books_authors_link bal JOIN authors a ON bal.author = a.id WHERE bal.book = b.id AND a.name LIKE ?))');
+          params.push(`%${val}%`, `%${val}%`);
+        } else if (field === 'title') {
+          whereClauses.push('b.title LIKE ?');
+          params.push(`%${val}%`);
+        } else if (field === 'tag' || field === 'tags') {
+          whereClauses.push('EXISTS (SELECT 1 FROM books_tags_link btl JOIN tags t ON btl.tag = t.id WHERE btl.book = b.id AND t.name LIKE ?)');
+          params.push(`%${val}%`);
+        } else if (field === 'series') {
+          whereClauses.push('EXISTS (SELECT 1 FROM books_series_link bsl JOIN series s ON bsl.series = s.id WHERE bsl.book = b.id AND s.name LIKE ?)');
+          params.push(`%${val}%`);
+        } else if (field === 'format' || field === 'formats') {
+          whereClauses.push('EXISTS (SELECT 1 FROM data d WHERE d.book = b.id AND UPPER(d.format) = ?)');
+          params.push(val.toUpperCase());
+        } else if (field === 'publisher') {
+          whereClauses.push('EXISTS (SELECT 1 FROM books_publishers_link bpl JOIN publishers p ON bpl.publisher = p.id WHERE bpl.book = b.id AND p.name LIKE ?)');
+          params.push(`%${val}%`);
+        } else if (field === 'lang' || field === 'language') {
+          whereClauses.push('EXISTS (SELECT 1 FROM books_languages_link bll JOIN languages l ON bll.lang_code = l.id WHERE bll.book = b.id AND l.lang_code LIKE ?)');
+          params.push(`%${val}%`);
+        } else if (field === 'id') {
+          whereClauses.push('b.id = ?');
+          params.push(Number(val) || 0);
+        } else if (field === 'rating') {
+          const num = parseFloat(val.replace(/[^\d.]/g, ''));
+          if (!isNaN(num)) {
+            const dbRating = num <= 5 ? num * 2 : num;
+            if (val.startsWith('>=')) {
+              whereClauses.push('EXISTS (SELECT 1 FROM books_ratings_link brl JOIN ratings r ON brl.rating = r.id WHERE brl.book = b.id AND r.rating >= ?)');
+              params.push(dbRating);
+            } else {
+              whereClauses.push('EXISTS (SELECT 1 FROM books_ratings_link brl JOIN ratings r ON brl.rating = r.id WHERE brl.book = b.id AND r.rating = ?)');
+              params.push(dbRating);
+            }
+          }
+        }
+      }
+
+      const cleanRem = remaining.trim();
+      if (cleanRem) {
+        const s = '%' + cleanRem + '%';
+        whereClauses.push(`(
+          b.title LIKE ?
+          OR b.author_sort LIKE ?
+          OR EXISTS (SELECT 1 FROM books_tags_link btl JOIN tags t ON btl.tag = t.id WHERE btl.book = b.id AND t.name LIKE ?)
+          OR EXISTS (SELECT 1 FROM books_series_link bsl JOIN series s ON bsl.series = s.id WHERE bsl.book = b.id AND s.name LIKE ?)
+        )`);
+        params.push(s, s, s, s);
+      }
+    },
+
+    /**
      * Query books with pagination, sorting, and filters
      */
     getBooks(options = {}) {
@@ -537,19 +606,22 @@ const CalibreDB = (function () {
         authorId = null,
         seriesId = null,
         tagId = null,
+        publisherId = null,
+        languageId = null,
+        ratingStars = null,
+        identifierType = null,
         format = null,
+        bookIds = null,
         sortBy = 'timestamp_desc',
         offset = 0,
-        limit = 24
+        limit = 36
       } = options;
 
       const whereClauses = [];
       const params = [];
 
       if (search && search.trim()) {
-        const s = '%' + search.trim() + '%';
-        whereClauses.push('(b.title LIKE ? OR b.author_sort LIKE ?)');
-        params.push(s, s);
+        this.parseCalibreSearch(search, whereClauses, params);
       }
 
       if (authorId) {
@@ -567,9 +639,43 @@ const CalibreDB = (function () {
         params.push(Number(tagId));
       }
 
+      if (publisherId) {
+        whereClauses.push('EXISTS (SELECT 1 FROM books_publishers_link bpl WHERE bpl.book = b.id AND bpl.publisher = ?)');
+        params.push(Number(publisherId));
+      }
+
+      if (languageId) {
+        whereClauses.push('EXISTS (SELECT 1 FROM books_languages_link bll WHERE bll.book = b.id AND bll.lang_code = ?)');
+        params.push(Number(languageId));
+      }
+
+      if (ratingStars !== null && ratingStars !== undefined) {
+        const stars = Number(ratingStars);
+        if (stars === 0) {
+          whereClauses.push('NOT EXISTS (SELECT 1 FROM books_ratings_link brl WHERE brl.book = b.id)');
+        } else {
+          whereClauses.push('EXISTS (SELECT 1 FROM books_ratings_link brl JOIN ratings r ON brl.rating = r.id WHERE brl.book = b.id AND ROUND(r.rating / 2.0) = ?)');
+          params.push(stars);
+        }
+      }
+
+      if (identifierType) {
+        whereClauses.push('EXISTS (SELECT 1 FROM identifiers idx WHERE idx.book = b.id AND LOWER(idx.type) = LOWER(?))');
+        params.push(String(identifierType));
+      }
+
       if (format) {
         whereClauses.push('EXISTS (SELECT 1 FROM data d WHERE d.book = b.id AND UPPER(d.format) = ?)');
         params.push(String(format).toUpperCase());
+      }
+
+      if (Array.isArray(bookIds)) {
+        if (bookIds.length === 0) {
+          return { total: 0, books: [] };
+        }
+        const ph = bookIds.map(() => '?').join(',');
+        whereClauses.push(`b.id IN (${ph})`);
+        params.push(...bookIds.map(Number));
       }
 
       const whereSql = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
@@ -585,16 +691,38 @@ const CalibreDB = (function () {
         case 'author_asc':
           orderSql = 'ORDER BY b.author_sort COLLATE NOCASE ASC, b.id DESC';
           break;
+        case 'author_desc':
+          orderSql = 'ORDER BY b.author_sort COLLATE NOCASE DESC, b.id DESC';
+          break;
         case 'pubdate_desc':
           orderSql = 'ORDER BY b.pubdate DESC, b.id DESC';
+          break;
+        case 'pubdate_asc':
+          orderSql = 'ORDER BY b.pubdate ASC, b.id ASC';
+          break;
+        case 'timestamp_asc':
+          orderSql = 'ORDER BY b.timestamp ASC, b.id ASC';
           break;
         case 'rating_desc':
           orderSql = 'ORDER BY rating DESC, b.id DESC';
           break;
+        case 'rating_asc':
+          orderSql = 'ORDER BY rating ASC, b.id ASC';
+          break;
+        case 'series_asc':
+          orderSql = 'ORDER BY series COLLATE NOCASE ASC, b.series_index ASC, b.id DESC';
+          break;
+        case 'series_desc':
+          orderSql = 'ORDER BY series COLLATE NOCASE DESC, b.series_index DESC, b.id DESC';
+          break;
         case 'random':
           orderSql = 'ORDER BY RANDOM()';
           break;
+        case 'id_asc':
+          orderSql = 'ORDER BY b.id ASC';
+          break;
         case 'id_desc':
+        case 'timestamp_desc':
         default:
           orderSql = 'ORDER BY b.timestamp DESC, b.id DESC';
           break;
@@ -625,6 +753,8 @@ const CalibreDB = (function () {
           b.timestamp,
           (SELECT GROUP_CONCAT(a.name, ', ') FROM books_authors_link bal JOIN authors a ON bal.author = a.id WHERE bal.book = b.id) AS authors,
           (SELECT GROUP_CONCAT(s.name, ', ') FROM books_series_link bsl JOIN series s ON bsl.series = s.id WHERE bsl.book = b.id) AS series,
+          (SELECT GROUP_CONCAT(t.name, ', ') FROM books_tags_link btl JOIN tags t ON btl.tag = t.id WHERE btl.book = b.id) AS tags,
+          (SELECT GROUP_CONCAT(p.name, ', ') FROM books_publishers_link bpl JOIN publishers p ON bpl.publisher = p.id WHERE bpl.book = b.id) AS publisher,
           (SELECT GROUP_CONCAT(d.format, ', ') FROM data d WHERE d.book = b.id) AS formats,
           (SELECT r.rating FROM books_ratings_link brl JOIN ratings r ON brl.rating = r.id WHERE brl.book = b.id LIMIT 1) AS rating
         FROM books b
@@ -649,6 +779,8 @@ const CalibreDB = (function () {
               authors: b.authors || b.author_sort || 'Auteur inconnu',
               series: b.series || null,
               series_index: b.series_index || 1.0,
+              tags: b.tags ? b.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+              publisher: b.publisher || '',
               path: b.path,
               has_cover: Boolean(b.has_cover),
               pubdate: b.pubdate,
@@ -1132,6 +1264,289 @@ const CalibreDB = (function () {
       } catch (e) {
         return [];
       }
+    },
+
+    /**
+     * Publishers list (for Calibre Tag Browser)
+     */
+    getPublishers(options = {}) {
+      if (!dbInstance) return [];
+      const { search = '', limit = 100, offset = 0 } = options;
+      let where = '';
+      const params = [];
+      if (search && search.trim()) {
+        where = 'WHERE p.name LIKE ?';
+        params.push('%' + search.trim() + '%');
+      }
+      const q = `
+        SELECT p.id, p.name, COUNT(bpl.book) as book_count
+        FROM publishers p
+        JOIN books_publishers_link bpl ON p.id = bpl.publisher
+        ${where}
+        GROUP BY p.id
+        ORDER BY book_count DESC, p.name COLLATE NOCASE ASC
+        LIMIT ? OFFSET ?
+      `;
+      try {
+        const res = dbInstance.exec(q, [...params, limit, offset]);
+        if (!res.length) return [];
+        return res[0].values.map(([id, name, count]) => ({ id, name, book_count: count }));
+      } catch (e) {
+        return [];
+      }
+    },
+
+    /**
+     * Languages list (for Calibre Tag Browser)
+     */
+    getLanguages() {
+      if (!dbInstance) return [];
+      const langNames = {
+        fra: 'Français', fre: 'Français', fr: 'Français',
+        eng: 'Anglais', en: 'Anglais',
+        spa: 'Espagnol', es: 'Espagnol',
+        deu: 'Allemand', ger: 'Allemand', de: 'Allemand',
+        ita: 'Italien', it: 'Italien',
+        por: 'Portugais', pt: 'Portugais',
+        rus: 'Russe', ru: 'Russe',
+        jpn: 'Japonais', ja: 'Japonais',
+        zho: 'Chinois', chi: 'Chinois', zh: 'Chinois',
+        ara: 'Arabe', ar: 'Arabe',
+        nld: 'Néerlandais', dut: 'Néerlandais', nl: 'Néerlandais'
+      };
+      const q = `
+        SELECT l.id, l.lang_code, COUNT(bll.book) as book_count
+        FROM languages l
+        JOIN books_languages_link bll ON l.id = bll.lang_code
+        GROUP BY l.id
+        ORDER BY book_count DESC
+      `;
+      try {
+        const res = dbInstance.exec(q);
+        if (!res.length) return [];
+        return res[0].values.map(([id, code, count]) => ({
+          id,
+          code: String(code || '').toLowerCase(),
+          name: langNames[String(code || '').toLowerCase()] || String(code || 'Inconnu').toUpperCase(),
+          book_count: count
+        }));
+      } catch (e) {
+        return [];
+      }
+    },
+
+    /**
+     * Formats distribution (for Calibre Tag Browser)
+     */
+    getFormatsDistribution() {
+      if (!dbInstance) return [];
+      try {
+        const res = dbInstance.exec('SELECT UPPER(format) as fmt, COUNT(DISTINCT book) as cnt FROM data GROUP BY UPPER(format) ORDER BY cnt DESC');
+        if (!res.length) return [];
+        return res[0].values.map(([format, book_count]) => ({ id: format, name: format, book_count }));
+      } catch (e) {
+        return [];
+      }
+    },
+
+    /**
+     * Ratings distribution (1..5 stars + unrated for Calibre Tag Browser)
+     */
+    getRatingsDistribution() {
+      if (!dbInstance) return [];
+      try {
+        const res = dbInstance.exec(`
+          SELECT CAST(ROUND(r.rating / 2.0) AS INTEGER) as stars, COUNT(brl.book) as cnt
+          FROM ratings r
+          JOIN books_ratings_link brl ON r.id = brl.rating
+          WHERE r.rating > 0
+          GROUP BY stars
+          ORDER BY stars DESC
+        `);
+        const list = [];
+        if (res.length) {
+          res[0].values.forEach(([stars, cnt]) => {
+            if (stars >= 1 && stars <= 5) {
+              list.push({
+                id: stars,
+                stars,
+                name: '★'.repeat(stars) + '☆'.repeat(5 - stars) + ` (${stars} étoiles)`,
+                book_count: cnt
+              });
+            }
+          });
+        }
+        return list;
+      } catch (e) {
+        return [];
+      }
+    },
+
+    /**
+     * Identifier types (ISBN, Google, Amazon, etc. for Calibre Tag Browser)
+     */
+    getIdentifierTypes() {
+      if (!dbInstance) return [];
+      try {
+        const res = dbInstance.exec('SELECT LOWER(type) as t, COUNT(DISTINCT book) as cnt FROM identifiers GROUP BY LOWER(type) ORDER BY cnt DESC');
+        if (!res.length) return [];
+        return res[0].values.map(([type, count]) => ({
+          id: type,
+          name: String(type).toUpperCase(),
+          book_count: count
+        }));
+      } catch (e) {
+        return [];
+      }
+    },
+
+    /**
+     * Update Book Metadata directly inside SQLite metadata.db & persist to IndexedDB
+     */
+    async updateBookMetadata(bookId, meta = {}) {
+      if (!dbInstance) throw new Error('Base de données non chargée');
+      const id = Number(bookId);
+
+      const title = (meta.title || 'Sans titre').trim();
+      const authorStr = (meta.authors || 'Auteur inconnu').trim();
+      const seriesName = (meta.series || '').trim();
+      const seriesIndex = parseFloat(meta.series_index) || 1.0;
+      const publisherName = (meta.publisher || '').trim();
+      const ratingStars = Number(meta.ratingStars || 0);
+      const tagsStr = (meta.tags || '').trim();
+      const comment = (meta.comment || '').trim();
+
+      // 1. Update books table
+      dbInstance.run(
+        'UPDATE books SET title = ?, sort = ?, author_sort = ?, series_index = ? WHERE id = ?',
+        [title, title, authorStr, seriesIndex, id]
+      );
+
+      // 2. Update Authors
+      const authorNames = authorStr.split(',').map((a) => a.trim()).filter(Boolean);
+      if (authorNames.length > 0) {
+        dbInstance.run('DELETE FROM books_authors_link WHERE book = ?', [id]);
+        for (const aName of authorNames) {
+          let aId = null;
+          const existA = dbInstance.exec('SELECT id FROM authors WHERE name = ? COLLATE NOCASE', [aName]);
+          if (existA.length && existA[0].values.length) {
+            aId = existA[0].values[0][0];
+          } else {
+            dbInstance.run('INSERT INTO authors (name, sort) VALUES (?, ?)', [aName, aName]);
+            aId = dbInstance.exec('SELECT last_insert_rowid()')[0].values[0][0];
+          }
+          dbInstance.run('INSERT OR IGNORE INTO books_authors_link (book, author) VALUES (?, ?)', [id, aId]);
+        }
+      }
+
+      // 3. Update Series
+      try {
+        dbInstance.run('DELETE FROM books_series_link WHERE book = ?', [id]);
+        if (seriesName) {
+          let sId = null;
+          const existS = dbInstance.exec('SELECT id FROM series WHERE name = ? COLLATE NOCASE', [seriesName]);
+          if (existS.length && existS[0].values.length) {
+            sId = existS[0].values[0][0];
+          } else {
+            dbInstance.run('INSERT INTO series (name, sort) VALUES (?, ?)', [seriesName, seriesName]);
+            sId = dbInstance.exec('SELECT last_insert_rowid()')[0].values[0][0];
+          }
+          dbInstance.run('INSERT OR IGNORE INTO books_series_link (book, series) VALUES (?, ?)', [id, sId]);
+        }
+      } catch (e) {}
+
+      // 4. Update Publisher
+      try {
+        dbInstance.run('DELETE FROM books_publishers_link WHERE book = ?', [id]);
+        if (publisherName) {
+          let pId = null;
+          const existP = dbInstance.exec('SELECT id FROM publishers WHERE name = ? COLLATE NOCASE', [publisherName]);
+          if (existP.length && existP[0].values.length) {
+            pId = existP[0].values[0][0];
+          } else {
+            dbInstance.run('INSERT INTO publishers (name, sort) VALUES (?, ?)', [publisherName, publisherName]);
+            pId = dbInstance.exec('SELECT last_insert_rowid()')[0].values[0][0];
+          }
+          dbInstance.run('INSERT OR IGNORE INTO books_publishers_link (book, publisher) VALUES (?, ?)', [id, pId]);
+        }
+      } catch (e) {}
+
+      // 5. Update Rating
+      try {
+        dbInstance.run('DELETE FROM books_ratings_link WHERE book = ?', [id]);
+        if (ratingStars >= 1 && ratingStars <= 5) {
+          const dbRating = Math.round(ratingStars * 2);
+          let rId = null;
+          const existR = dbInstance.exec('SELECT id FROM ratings WHERE rating = ?', [dbRating]);
+          if (existR.length && existR[0].values.length) {
+            rId = existR[0].values[0][0];
+          } else {
+            dbInstance.run('INSERT INTO ratings (rating) VALUES (?)', [dbRating]);
+            rId = dbInstance.exec('SELECT last_insert_rowid()')[0].values[0][0];
+          }
+          dbInstance.run('INSERT OR IGNORE INTO books_ratings_link (book, rating) VALUES (?, ?)', [id, rId]);
+        }
+      } catch (e) {}
+
+      // 6. Update Tags
+      try {
+        dbInstance.run('DELETE FROM books_tags_link WHERE book = ?', [id]);
+        const tagNames = tagsStr.split(',').map((t) => t.trim()).filter(Boolean);
+        for (const tName of tagNames) {
+          let tId = null;
+          const existT = dbInstance.exec('SELECT id FROM tags WHERE name = ? COLLATE NOCASE', [tName]);
+          if (existT.length && existT[0].values.length) {
+            tId = existT[0].values[0][0];
+          } else {
+            dbInstance.run('INSERT INTO tags (name) VALUES (?)', [tName]);
+            tId = dbInstance.exec('SELECT last_insert_rowid()')[0].values[0][0];
+          }
+          dbInstance.run('INSERT OR IGNORE INTO books_tags_link (book, tag) VALUES (?, ?)', [id, tId]);
+        }
+      } catch (e) {}
+
+      // 7. Update Comments / Summary
+      try {
+        const existC = dbInstance.exec('SELECT id FROM comments WHERE book = ?', [id]);
+        if (existC.length && existC[0].values.length) {
+          dbInstance.run('UPDATE comments SET text = ? WHERE book = ?', [comment, id]);
+        } else if (comment) {
+          dbInstance.run('INSERT INTO comments (book, text) VALUES (?, ?)', [id, comment]);
+        }
+      } catch (e) {}
+
+      // Persist updated database binary to IndexedDB
+      const exported = dbInstance.export();
+      await CalibreStorage.saveMetadataDB(exported, dbName || 'metadata.db');
+      return this.getBookDetails(id);
+    },
+
+    /**
+     * Delete a book from the local SQLite database and persist
+     */
+    async deleteBook(bookId) {
+      if (!dbInstance) throw new Error('Base de données non chargée');
+      const id = Number(bookId);
+      const tables = [
+        ['books_authors_link', 'book'],
+        ['books_series_link', 'book'],
+        ['books_tags_link', 'book'],
+        ['books_publishers_link', 'book'],
+        ['books_ratings_link', 'book'],
+        ['books_languages_link', 'book'],
+        ['comments', 'book'],
+        ['data', 'book'],
+        ['identifiers', 'book'],
+        ['books', 'id']
+      ];
+      for (const [tbl, col] of tables) {
+        try {
+          dbInstance.run(`DELETE FROM ${tbl} WHERE ${col} = ?`, [id]);
+        } catch (e) {}
+      }
+      const exported = dbInstance.export();
+      await CalibreStorage.saveMetadataDB(exported, dbName || 'metadata.db');
+      return true;
     },
 
     /**
