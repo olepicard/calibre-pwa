@@ -239,6 +239,9 @@ const CalibreApp = (function () {
    * Initialize Application
    */
   async function init() {
+    // Register Service Worker IMMEDIATELY (before any await, so window 'load' is never missed!)
+    registerServiceWorker();
+
     await setupTheme();
     setupPwaInstall();
     setupDialogDismissFallbacks();
@@ -283,8 +286,6 @@ const CalibreApp = (function () {
       updateDbStatusBadge('Erreur DB', 'badge-danger');
       showToast('Erreur initialisation : ' + err.message, 'error');
     }
-
-    registerServiceWorker();
   }
 
   function updateHeaderLibraryTitle(name) {
@@ -296,22 +297,27 @@ const CalibreApp = (function () {
 
   function registerServiceWorker() {
     if ('serviceWorker' in navigator) {
+      const hadController = Boolean(navigator.serviceWorker.controller);
       let refreshing = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (refreshing) return;
+        if (!hadController || refreshing || navigator.onLine === false) return;
         refreshing = true;
         window.location.reload();
       });
 
-      window.addEventListener('load', () => {
+      const doRegister = () => {
         navigator.serviceWorker.register('./sw.js')
           .then((reg) => {
-            reg.update().catch(() => {});
+            console.log('[PWA] ServiceWorker enregistré, scope:', reg.scope);
+            if (navigator.onLine !== false) {
+              reg.update().catch(() => {});
+            }
             reg.onupdatefound = () => {
               const installing = reg.installing;
+              if (!installing) return;
               installing.onstatechange = () => {
                 if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-                  showToast('Mise à jour Calibre PWA appliquée !', 'info');
+                  showToast('Mise à jour Calibre PWA prête pour le mode hors-ligne !', 'info');
                 }
               };
             };
@@ -319,7 +325,13 @@ const CalibreApp = (function () {
           .catch((err) => {
             console.warn('ServiceWorker non enregistré:', err);
           });
-      });
+      };
+
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        doRegister();
+      } else {
+        window.addEventListener('DOMContentLoaded', doRegister, { once: true });
+      }
     }
   }
 
