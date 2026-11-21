@@ -1588,7 +1588,37 @@ dialog::backdrop {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-inline-size: 42vw;
+  max-inline-size: 32vw;
+}
+
+#db-status-badge {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-inline-size: 145px;
+  flex-shrink: 1;
+}
+
+@media (max-width: 480px) {
+  .topbar-library-name {
+    max-inline-size: 24vw;
+    font-size: 0.9rem;
+  }
+  #db-status-badge {
+    max-inline-size: 118px;
+    font-size: 0.7rem;
+    padding: 3px 7px;
+  }
+  .topbar-icon-btn {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+.app-header,
+.main-content,
+.controls-bar {
+  max-inline-size: 100vw;
 }
 
 .topbar-icon-btn {

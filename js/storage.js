@@ -482,6 +482,38 @@ const CalibreStorage = (function () {
     },
 
     /**
+     * Book covers cache in IndexedDB (book_covers store)
+     */
+    async saveCover(bookId, blob) {
+      if (!bookId || !blob) return null;
+      const db = await openDatabase();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('book_covers', 'readwrite');
+        const store = tx.objectStore('book_covers');
+        const record = {
+          bookId: Number(bookId),
+          blob: blob,
+          savedAt: Date.now()
+        };
+        const req = store.put(record);
+        req.onsuccess = () => resolve(blob);
+        req.onerror = (e) => reject(e.target.error);
+      });
+    },
+
+    async getCover(bookId) {
+      if (!bookId) return null;
+      const db = await openDatabase();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('book_covers', 'readonly');
+        const store = tx.objectStore('book_covers');
+        const req = store.get(Number(bookId));
+        req.onsuccess = () => resolve(req.result ? req.result.blob : null);
+        req.onerror = (e) => reject(e.target.error);
+      });
+    },
+
+    /**
      * User setting getter / setter
      */
     async getSetting(key, defaultValue = null) {

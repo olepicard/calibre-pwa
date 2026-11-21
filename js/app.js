@@ -162,15 +162,23 @@ const CalibreApp = (function () {
           <div class="status-missing-header">
             <span class="status-missing-icon">⚠️</span>
             <div>
-              <div class="status-missing-title">Fichier non trouvé dans le dossier local défini</div>
-              <div class="status-missing-subtitle">Le fichier n'a pas été trouvé à l'emplacement standard Calibre :</div>
+              <div class="status-missing-title">Fichier non trouvé dans le dossier / ZIP local</div>
+              <div class="status-missing-subtitle">Sur Android, si la page a été rechargée, re-sélectionnez votre fichier .ZIP ou dossier local ci-dessous :</div>
             </div>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; margin: 4px 0;">
+            <button type="button" class="btn btn-primary btn-sm" onclick="CalibreApp.defineLocalZipArchive()">
+              📦 Connecter / Reconnecter l'archive .ZIP
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="CalibreApp.defineLocalDirectory()">
+              📁 Connecter le dossier local
+            </button>
           </div>
           <div class="status-missing-list">
             ${filesHtml}
           </div>
           <div class="status-missing-help">
-            💡 <em>Vérifiez que le dossier racine de vos livres est bien défini dans l'onglet <strong>Préférences</strong>, ou associez directement le fichier ci-dessus.</em>
+            💡 <em>Sur smartphone Android, l'accès direct à un fichier <strong>.ZIP</strong> de plusieurs Go est valable durant la session active : cliquez sur <strong>« 📦 Connecter / Reconnecter l'archive .ZIP »</strong> pour activer les jaquettes et la lecture EPUB.</em>
           </div>
         </div>
       `;
@@ -253,7 +261,14 @@ const CalibreApp = (function () {
       if (initResult.loaded) {
         const libName = (initResult.name || 'calibre library').replace(/\.db$/i, '');
         updateHeaderLibraryTitle(libName);
-        updateDbStatusBadge(`${initResult.name}`, 'badge-success');
+        if (initResult.directoryStatus === 'connected') {
+          const icon = initResult.sourceType === 'zip' ? '📦' : '📁';
+          updateDbStatusBadge(`${icon} ${initResult.directoryName || initResult.name}`, 'badge-success');
+        } else if (String(initResult.name || '').toLowerCase().includes('.zip')) {
+          updateDbStatusBadge('⚠️ Reconnecter .ZIP', 'badge-warning');
+        } else {
+          updateDbStatusBadge(`${initResult.name}`, 'badge-success');
+        }
         refreshStats();
         renderTagBrowserTree();
         switchTab('books');
@@ -281,14 +296,22 @@ const CalibreApp = (function () {
 
   function registerServiceWorker() {
     if ('serviceWorker' in navigator) {
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshing) return;
+        refreshing = true;
+        window.location.reload();
+      });
+
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js')
           .then((reg) => {
+            reg.update().catch(() => {});
             reg.onupdatefound = () => {
               const installing = reg.installing;
               installing.onstatechange = () => {
                 if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-                  showToast('Nouvelle version Calibre PWA prête !', 'info');
+                  showToast('Mise à jour Calibre PWA appliquée !', 'info');
                 }
               };
             };
@@ -936,7 +959,7 @@ const CalibreApp = (function () {
     document.getElementById('btn-rescan-local-dir').addEventListener('click', rescanLocalDirectory);
     document.getElementById('btn-disconnect-local-dir').addEventListener('click', disconnectLocalDirectory);
 
-    // Hidden folder input for fallback
+    // Hidden folder input for fallback (DO NOT reset .value = '' after selection on Android, as it revokes content:// URIs)
     const inputFolderFallback = document.getElementById('input-folder-fallback');
     inputFolderFallback.addEventListener('change', async (e) => {
       const files = Array.from(e.target.files);
@@ -944,17 +967,32 @@ const CalibreApp = (function () {
       const res = CalibreDB.registerFileList(files);
       showToast(`Dossier local associé ! ${res.epubsCount} EPUBs indexés.`, 'success');
       updateLocalDirectoryUI();
-      inputFolderFallback.value = '';
+      if (state.currentTab === 'books') loadBooks(true);
     });
 
     // Hidden ZIP archive input for fallback / mobile file selection
+    // IMPORTANT: Never clear inputZipLibrary.value = '' after change on Android Chrome,
+    // because clearing the input invalidates the underlying Android content:// File reference!
     const inputZipLibrary = document.getElementById('input-zip-library');
     if (inputZipLibrary) {
       inputZipLibrary.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
         await handleZipArchiveImport(file);
-        inputZipLibrary.value = '';
+      });
+    }
+
+    const dbBadge = document.getElementById('db-status-badge');
+    if (dbBadge) {
+      dbBadge.style.cursor = 'pointer';
+      dbBadge.title = 'Cliquer pour connecter une archive .ZIP ou gérer la bibliothèque';
+      dbBadge.addEventListener('click', () => {
+        const info = CalibreDB.getLocalDirectoryInfo();
+        if (info.status !== 'connected') {
+          defineLocalZipArchive();
+        } else {
+          switchTab('settings');
+        }
       });
     }
 
@@ -1268,13 +1306,16 @@ const CalibreApp = (function () {
         showToast('Indexation rapide du répertoire central ZIP...', 'info');
         const res = await CalibreDB.setLocalZipHandle(fileHandle);
         onZipArchiveConnected(res);
+        return;
       } catch (err) {
-        if (err.name !== 'AbortError') {
-          document.getElementById('input-zip-library')?.click();
-        }
+        if (err.name === 'AbortError') return;
       }
-    } else {
-      document.getElementById('input-zip-library')?.click();
+    }
+
+    const inputZip = document.getElementById('input-zip-library');
+    if (inputZip) {
+      inputZip.value = '';
+      inputZip.click();
     }
   }
 
@@ -1292,17 +1333,29 @@ const CalibreApp = (function () {
 
   function onZipArchiveConnected(res) {
     updateLocalDirectoryUI();
+    const cleanTitle = (res.name || 'calibre.zip').replace(/\.zip$/i, '');
+    updateHeaderLibraryTitle(cleanTitle);
+    updateDbStatusBadge(`📦 ${res.epubsCount} EPUBs`, 'badge-success');
+
     if (res.hasMetadataDb) {
-      const cleanTitle = (res.name || 'calibre.zip').replace(/\.zip$/i, '');
-      updateHeaderLibraryTitle(cleanTitle);
-      updateDbStatusBadge(`📦 ${res.name}`, 'badge-success');
-      showToast(`✓ Archive ZIP chargée (${res.epubsCount} EPUBs + metadata.db) !`, 'success');
+      showToast(`✓ Archive ZIP active (${res.epubsCount.toLocaleString('fr-FR')} EPUBs + jaquettes) !`, 'success');
       refreshStats();
       renderTagBrowserTree();
+    } else {
+      showToast(`✓ Archive ZIP connectée (${res.epubsCount.toLocaleString('fr-FR')} EPUBs indexés).`, 'success');
+    }
+
+    const detailDialog = document.getElementById('book-detail-dialog');
+    const wasDetailOpen = detailDialog && detailDialog.open && state.selectedBookId;
+
+    if (state.currentTab !== 'books') {
       switchTab('books');
     } else {
-      showToast(`✓ Archive ZIP connectée (${res.epubsCount} EPUBs indexés).`, 'success');
-      if (state.currentTab === 'books') loadBooks(true);
+      loadBooks(true);
+    }
+
+    if (wasDetailOpen) {
+      openBookDetail(state.selectedBookId);
     }
   }
 
