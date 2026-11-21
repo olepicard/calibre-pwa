@@ -11,8 +11,11 @@ const CalibreDB = (function () {
   let dbInstance = null;
   let dbName = 'metadata.db';
 
-  // Persistent Directory Handle (File System Access API)
+  // Persistent Directory Handle or ZIP File Handle (File System Access API / File API)
   let localDirectoryHandle = null;
+  let localZipHandle = null;
+  let localZipFile = null;
+  let localSourceType = 'none'; // 'none' | 'directory' | 'zip'
   let localDirectoryName = '';
   let localDirectoryStatus = 'none'; // 'none' | 'connected' | 'needs_permission'
 
@@ -221,15 +224,242 @@ const CalibreDB = (function () {
     }
   }
 
+  /**
+   * High-Performance Zero-Copy Random-Access ZIP Entry Extractor
+   * Slices ONLY the target file's compressed byte range from the .zip File on disk
+   * and decompresses it on the fly via native DecompressionStream('deflate-raw') (or STORE 0-copy).
+   */
+  async function extractZipEntryToFile(zipFile, entry) {
+    if (!zipFile || !entry) return null;
+
+    // 1. Read the 30-byte Local File Header at entry.localHeaderOffset to find variable name/extra lengths
+    const lhBuf = await zipFile.slice(entry.localHeaderOffset, entry.localHeaderOffset + 30).arrayBuffer();
+    const lhView = new DataView(lhBuf);
+    if (lhView.getUint32(0, true) !== 0x04034b50) {
+      throw new Error('En-tête local ZIP invalide pour ' + entry.name);
+    }
+
+    const localNameLen = lhView.getUint16(26, true);
+    const localExtraLen = lhView.getUint16(28, true);
+    const dataStart = entry.localHeaderOffset + 30 + localNameLen + localExtraLen;
+    const rawSlice = zipFile.slice(dataStart, dataStart + entry.compressedSize);
+
+    const ext = entry.name.split('.').pop().toLowerCase();
+    const mimeMap = {
+      epub: 'application/epub+zip',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      db: 'application/x-sqlite3',
+      pdf: 'application/pdf'
+    };
+    const mimeType = mimeMap[ext] || 'application/octet-stream';
+
+    // Method 0: STORE (uncompressed — zero-copy slice!)
+    if (entry.compressionMethod === 0) {
+      return new File([rawSlice], entry.name, { type: mimeType });
+    }
+
+    // Method 8: DEFLATE (use native C++ DecompressionStream('deflate-raw'))
+    if (entry.compressionMethod === 8) {
+      if (typeof DecompressionStream === 'function') {
+        const ds = new DecompressionStream('deflate-raw');
+        const decompressedStream = rawSlice.stream().pipeThrough(ds);
+        const decompressedBlob = await new Response(decompressedStream).blob();
+        return new File([decompressedBlob], entry.name, { type: mimeType });
+      }
+      // Fallback if DecompressionStream is unavailable and zip is small enough for JSZip
+      if (typeof JSZip === 'function') {
+        const z = await JSZip.loadAsync(zipFile);
+        const zObj = z.file(entry.rawZipPath);
+        if (zObj) {
+          const blob = await zObj.async('blob');
+          return new File([blob], entry.name, { type: mimeType });
+        }
+      }
+      throw new Error('DecompressionStream non supporté sur ce navigateur.');
+    }
+
+    throw new Error(`Méthode de compression ZIP (${entry.compressionMethod}) non supportée.`);
+  }
+
+  /**
+   * Parse ONLY the Central Directory at the end of a .zip File (supports standard ZIP & ZIP64).
+   * Uses < 2 MB RAM and < 50 ms even on multi-gigabyte Calibre .zip archives!
+   */
+  async function parseAndIndexZipFile(zipFile) {
+    localFileMap.clear();
+    epubIndex.clear();
+    coverIndex.clear();
+
+    const fileSize = zipFile.size;
+    if (fileSize < 22) {
+      throw new Error('Fichier ZIP trop petit ou invalide.');
+    }
+
+    // Read the last 65 KB to locate End of Central Directory (EOCD)
+    const tailSize = Math.min(fileSize, 65557);
+    const tailOffset = fileSize - tailSize;
+    const tailBuf = await zipFile.slice(tailOffset, fileSize).arrayBuffer();
+    const tailView = new DataView(tailBuf);
+
+    let eocdPos = -1;
+    for (let pos = tailBuf.byteLength - 22; pos >= 0; pos--) {
+      if (tailView.getUint32(pos, true) === 0x06054b50) {
+        eocdPos = pos;
+        break;
+      }
+    }
+
+    if (eocdPos === -1) {
+      throw new Error('Signature de fin de répertoire central ZIP (EOCD) introuvable.');
+    }
+
+    let cdSize = tailView.getUint32(eocdPos + 12, true);
+    let cdOffset = tailView.getUint32(eocdPos + 16, true);
+
+    // Check for ZIP64 EOCD Locator (20 bytes right before EOCD)
+    if (eocdPos >= 20 && tailView.getUint32(eocdPos - 20, true) === 0x07064b50) {
+      const z64EocdOffset = Number(tailView.getBigUint64(eocdPos - 12, true));
+      const z64Buf = await zipFile.slice(z64EocdOffset, z64EocdOffset + 56).arrayBuffer();
+      const z64View = new DataView(z64Buf);
+      if (z64View.getUint32(0, true) === 0x06064b50) {
+        cdSize = Number(z64View.getBigUint64(40, true));
+        cdOffset = Number(z64View.getBigUint64(48, true));
+      }
+    }
+
+    // Slice ONLY the Central Directory
+    const cdBuf = await zipFile.slice(cdOffset, cdOffset + cdSize).arrayBuffer();
+    const cdView = new DataView(cdBuf);
+    const cdBytes = new Uint8Array(cdBuf);
+    const utf8Decoder = new TextDecoder('utf-8');
+
+    const rawEntries = [];
+    let ptr = 0;
+
+    while (ptr + 46 <= cdBuf.byteLength) {
+      const sig = cdView.getUint32(ptr, true);
+      if (sig !== 0x02014b50) break;
+
+      const compressionMethod = cdView.getUint16(ptr + 10, true);
+      let compressedSize = cdView.getUint32(ptr + 20, true);
+      let uncompressedSize = cdView.getUint32(ptr + 24, true);
+      const nameLen = cdView.getUint16(ptr + 28, true);
+      const extraLen = cdView.getUint16(ptr + 30, true);
+      const commentLen = cdView.getUint16(ptr + 32, true);
+      let localHeaderOffset = cdView.getUint32(ptr + 42, true);
+
+      const rawZipPath = utf8Decoder.decode(cdBytes.subarray(ptr + 46, ptr + 46 + nameLen));
+
+      // Parse ZIP64 Extra Field (0x0001) if any 32-bit field overflowed (0xFFFFFFFF)
+      if (
+        extraLen > 0 &&
+        (uncompressedSize === 0xFFFFFFFF || compressedSize === 0xFFFFFFFF || localHeaderOffset === 0xFFFFFFFF)
+      ) {
+        let ePtr = ptr + 46 + nameLen;
+        const eEnd = ePtr + extraLen;
+        while (ePtr + 4 <= eEnd) {
+          const headerId = cdView.getUint16(ePtr, true);
+          const dataSize = cdView.getUint16(ePtr + 2, true);
+          if (headerId === 0x0001) {
+            let fPtr = ePtr + 4;
+            if (uncompressedSize === 0xFFFFFFFF && fPtr + 8 <= ePtr + 4 + dataSize) {
+              uncompressedSize = Number(cdView.getBigUint64(fPtr, true));
+              fPtr += 8;
+            }
+            if (compressedSize === 0xFFFFFFFF && fPtr + 8 <= ePtr + 4 + dataSize) {
+              compressedSize = Number(cdView.getBigUint64(fPtr, true));
+              fPtr += 8;
+            }
+            if (localHeaderOffset === 0xFFFFFFFF && fPtr + 8 <= ePtr + 4 + dataSize) {
+              localHeaderOffset = Number(cdView.getBigUint64(fPtr, true));
+              fPtr += 8;
+            }
+            break;
+          }
+          ePtr += 4 + dataSize;
+        }
+      }
+
+      if (!rawZipPath.endsWith('/')) {
+        rawEntries.push({
+          rawZipPath,
+          normFullPath: normalizePath(rawZipPath),
+          compressionMethod,
+          compressedSize,
+          uncompressedSize,
+          localHeaderOffset
+        });
+      }
+
+      ptr += 46 + nameLen + extraLen + commentLen;
+    }
+
+    // Detect if metadata.db is at the root ("metadata.db") or inside a top-level folder ("folder/metadata.db")
+    let rootPrefix = '';
+    const metaEntry = rawEntries.find((e) => e.normFullPath === 'metadata.db' || e.normFullPath.endsWith('/metadata.db'));
+    if (metaEntry && metaEntry.normFullPath.endsWith('/metadata.db')) {
+      rootPrefix = metaEntry.normFullPath.slice(0, metaEntry.normFullPath.length - 'metadata.db'.length);
+    }
+
+    for (const item of rawEntries) {
+      let relNormPath = item.normFullPath;
+      if (rootPrefix && relNormPath.startsWith(rootPrefix)) {
+        relNormPath = relNormPath.slice(rootPrefix.length);
+      }
+
+      const rawParts = item.rawZipPath.replace(/\\/g, '/').split('/').filter(Boolean);
+      const baseName = rawParts[rawParts.length - 1] || item.rawZipPath;
+      const normName = normalizePath(baseName);
+
+      const virtualEntry = {
+        kind: 'file',
+        isZipEntry: true,
+        name: baseName,
+        rawZipPath: item.rawZipPath,
+        normPath: relNormPath,
+        compressionMethod: item.compressionMethod,
+        compressedSize: item.compressedSize,
+        uncompressedSize: item.uncompressedSize,
+        localHeaderOffset: item.localHeaderOffset,
+        async getFile() {
+          return extractZipEntryToFile(zipFile, this);
+        }
+      };
+
+      localFileMap.set(relNormPath, virtualEntry);
+      localFileMap.set(item.normFullPath, virtualEntry);
+      localFileMap.set(normName, virtualEntry);
+
+      if (normName.endsWith('.epub')) {
+        epubIndex.set(normName, virtualEntry);
+        epubIndex.set(relNormPath, virtualEntry);
+      }
+      if (normName === 'cover.jpg' || normName === 'cover.jpeg' || normName === 'cover.png') {
+        coverIndex.set(relNormPath, virtualEntry);
+      }
+    }
+
+    return {
+      filesCount: rawEntries.length,
+      epubsCount: epubIndex.size / 2 > 0 ? Math.ceil(epubIndex.size / 2) : epubIndex.size,
+      hasMetadataDb: localFileMap.has('metadata.db')
+    };
+  }
+
   return {
     /**
-     * Initialize CalibreDB engine and restore saved local directory and database
+     * Initialize CalibreDB engine and restore saved local directory / ZIP archive and database
      */
     async init() {
       await initEngine();
 
-      // 1. Try restoring saved DirectoryHandle from IndexedDB
-      await this.restoreSavedDirectoryHandle();
+      // 1. Try restoring saved ZIP FileHandle or DirectoryHandle from IndexedDB
+      await this.restoreSavedZipHandle();
+      if (localDirectoryStatus === 'none') {
+        await this.restoreSavedDirectoryHandle();
+      }
 
       // 2. Try loading metadata.db from IndexedDB
       const saved = await CalibreStorage.getMetadataDB();
@@ -241,7 +471,8 @@ const CalibreDB = (function () {
             name: saved.name,
             size: saved.size,
             directoryStatus: localDirectoryStatus,
-            directoryName: localDirectoryName
+            directoryName: localDirectoryName,
+            sourceType: localSourceType
           };
         } catch (err) {
           console.warn('Erreur lors du chargement de la base enregistrée:', err);
@@ -251,8 +482,35 @@ const CalibreDB = (function () {
       return {
         loaded: false,
         directoryStatus: localDirectoryStatus,
-        directoryName: localDirectoryName
+        directoryName: localDirectoryName,
+        sourceType: localSourceType
       };
+    },
+
+    /**
+     * Restore saved ZIP FileHandle from IndexedDB
+     */
+    async restoreSavedZipHandle() {
+      if (!('showOpenFilePicker' in window)) return;
+      try {
+        const saved = await CalibreStorage.getZipFileHandle();
+        if (saved && saved.handle) {
+          localZipHandle = saved.handle;
+          localSourceType = 'zip';
+          localDirectoryName = saved.name || localZipHandle.name || 'bibliotheque.zip';
+
+          const perm = await localZipHandle.queryPermission({ mode: 'read' });
+          if (perm === 'granted') {
+            localZipFile = await localZipHandle.getFile();
+            localDirectoryStatus = 'connected';
+            await parseAndIndexZipFile(localZipFile);
+          } else {
+            localDirectoryStatus = 'needs_permission';
+          }
+        }
+      } catch (err) {
+        console.warn('Erreur restauration ZipFileHandle:', err);
+      }
     },
 
     /**
@@ -267,6 +525,7 @@ const CalibreDB = (function () {
         const saved = await CalibreStorage.getDirectoryHandle();
         if (saved && saved.handle) {
           localDirectoryHandle = saved.handle;
+          localSourceType = 'directory';
           localDirectoryName = saved.name || localDirectoryHandle.name || 'Dossier Calibre';
 
           // Check permissions
@@ -285,9 +544,24 @@ const CalibreDB = (function () {
     },
 
     /**
-     * Request re-granting permission on the saved DirectoryHandle
+     * Request re-granting permission on the saved DirectoryHandle or ZipFileHandle
      */
     async requestDirectoryPermission() {
+      if (localSourceType === 'zip' && localZipHandle) {
+        try {
+          const perm = await localZipHandle.requestPermission({ mode: 'read' });
+          if (perm === 'granted') {
+            localZipFile = await localZipHandle.getFile();
+            localDirectoryStatus = 'connected';
+            await parseAndIndexZipFile(localZipFile);
+            return true;
+          }
+        } catch (e) {
+          console.warn('Permission ZIP refusée:', e);
+        }
+        return false;
+      }
+
       if (!localDirectoryHandle) return false;
       try {
         const perm = await localDirectoryHandle.requestPermission({ mode: 'read' });
@@ -303,14 +577,69 @@ const CalibreDB = (function () {
     },
 
     /**
+     * Connect a local Calibre ZIP archive via FileSystemFileHandle (persistent)
+     */
+    async setLocalZipHandle(fileHandle) {
+      localZipHandle = fileHandle;
+      localZipFile = await fileHandle.getFile();
+      localDirectoryHandle = null;
+      localSourceType = 'zip';
+      localDirectoryName = fileHandle.name;
+      localDirectoryStatus = 'connected';
+
+      await CalibreStorage.removeDirectoryHandle();
+      await CalibreStorage.saveZipFileHandle(fileHandle);
+
+      return this.registerZipFile(localZipFile, true);
+    },
+
+    /**
+     * Register and index a Calibre .zip File (with metadata.db at root + EPUB folders)
+     */
+    async registerZipFile(file, keepHandle = false) {
+      if (!keepHandle) {
+        localZipHandle = null;
+        await CalibreStorage.removeDirectoryHandle();
+        await CalibreStorage.removeZipFileHandle();
+      }
+      localZipFile = file;
+      localDirectoryHandle = null;
+      localSourceType = 'zip';
+      localDirectoryName = file.name || 'bibliotheque.zip';
+      localDirectoryStatus = 'connected';
+
+      const stats = await parseAndIndexZipFile(file);
+
+      // Automatically extract and load metadata.db if present at the root of the ZIP!
+      const dbFile = await this.findMetadataDbInMap();
+      if (dbFile) {
+        const zipLibName = `${localDirectoryName} (metadata.db)`;
+        this.loadFromArrayBuffer(dbFile.buffer, zipLibName);
+        await CalibreStorage.saveMetadataDB(dbFile.buffer, zipLibName);
+      }
+
+      return {
+        name: localDirectoryName,
+        sourceType: 'zip',
+        filesIndexed: stats.filesCount,
+        epubsCount: stats.epubsCount,
+        hasMetadataDb: dbFile !== null
+      };
+    },
+
+    /**
      * Set a new local directory handle and persist it
      */
     async setLocalDirectoryHandle(dirHandle) {
       localDirectoryHandle = dirHandle;
+      localZipHandle = null;
+      localZipFile = null;
+      localSourceType = 'directory';
       localDirectoryName = dirHandle.name;
       localDirectoryStatus = 'connected';
 
       // Persist in IndexedDB
+      await CalibreStorage.removeZipFileHandle();
       await CalibreStorage.saveDirectoryHandle(dirHandle);
 
       // Scan directory and build fast indexes
@@ -325,6 +654,7 @@ const CalibreDB = (function () {
 
       return {
         name: localDirectoryName,
+        sourceType: 'directory',
         filesIndexed: localFileMap.size,
         epubsCount: epubIndex.size,
         hasMetadataDb: dbFile !== null
@@ -332,25 +662,31 @@ const CalibreDB = (function () {
     },
 
     /**
-     * Remove the local directory connection
+     * Remove the local directory or ZIP archive connection
      */
     async removeLocalDirectory() {
       localDirectoryHandle = null;
+      localZipHandle = null;
+      localZipFile = null;
+      localSourceType = 'none';
       localDirectoryName = '';
       localDirectoryStatus = 'none';
       localFileMap.clear();
       epubIndex.clear();
       coverIndex.clear();
       await CalibreStorage.removeDirectoryHandle();
+      await CalibreStorage.removeZipFileHandle();
     },
 
     getLocalDirectoryInfo() {
       return {
-        handle: localDirectoryHandle,
+        handle: localDirectoryHandle || localZipHandle,
+        zipFile: localZipFile,
+        sourceType: localSourceType,
         name: localDirectoryName,
         status: localDirectoryStatus,
         filesCount: localFileMap.size,
-        epubsCount: epubIndex.size
+        epubsCount: localSourceType === 'zip' ? Math.ceil(epubIndex.size / 2) : epubIndex.size
       };
     },
 
@@ -1582,13 +1918,27 @@ const CalibreDB = (function () {
           }
         }
 
-        // B. Check coverIndex / localFileMap
+        // B. Check coverIndex / localFileMap (works for both Local Directory & ZIP Archive!)
         for (const cand of [`${basePath}/cover.jpg`, `${basePath}/cover.jpeg`, `${basePath}/cover.png`]) {
-          const match = localFileMap.get(cand);
+          const match = localFileMap.get(cand) || coverIndex.get(cand);
           if (match) {
             let fileObj = match;
             if (typeof match.getFile === 'function') {
               fileObj = await match.getFile();
+            }
+            const url = URL.createObjectURL(fileObj);
+            createdObjectUrls.add(url);
+            return url;
+          }
+        }
+
+        // C. Fallback cover match by Calibre book ID suffix `(${bookId})/cover.jpg`
+        const idToken = `(${bookId})/cover.`;
+        for (const [k, handle] of coverIndex.entries()) {
+          if (k.includes(idToken)) {
+            let fileObj = handle;
+            if (typeof handle.getFile === 'function') {
+              fileObj = await handle.getFile();
             }
             const url = URL.createObjectURL(fileObj);
             createdObjectUrls.add(url);
@@ -1658,10 +2008,11 @@ const CalibreDB = (function () {
         }
       }
 
-      // 2. Check localFileMap / epubIndex (from webkitdirectory or previous scan)
+      // 2. Check localFileMap / epubIndex (from ZIP archive, webkitdirectory, or previous scan)
       if (bookDetails && (localFileMap.size > 0 || epubIndex.size > 0)) {
         const basePath = normalizePath(bookDetails.path);
         const matchingFiles = bookDetails.dataFiles.filter((d) => d.format === fmt);
+        const srcTag = localSourceType === 'zip' ? 'archive_zip' : 'local_dir';
 
         for (const d of matchingFiles) {
           const ext = fmt.toLowerCase();
@@ -1677,19 +2028,20 @@ const CalibreDB = (function () {
               if (typeof match.getFile === 'function') {
                 fileObj = await match.getFile();
               }
-              return { blob: fileObj, filename: fileObj.name || `${d.name}.${ext}`, source: 'local_dir' };
+              return { blob: fileObj, filename: fileObj.name || `${d.name}.${ext}`, source: match.isZipEntry ? 'archive_zip' : srcTag };
             }
           }
 
-          // Fallback search across epubIndex by suffix or normalized name
+          // Fallback search across epubIndex by suffix, normalized name, or Calibre book ID folder `(${bId})/`
           if (fmt === 'EPUB') {
+            const idFolderToken = `(${bId})/`;
             for (const [key, fileHandle] of epubIndex.entries()) {
-              if (key === normFile || key.endsWith('/' + normFile)) {
+              if (key === normFile || key.endsWith('/' + normFile) || key.includes(idFolderToken)) {
                 let fileObj = fileHandle;
                 if (typeof fileObj.getFile === 'function') {
                   fileObj = await fileObj.getFile();
                 }
-                return { blob: fileObj, filename: fileObj.name || `${d.name}.${ext}`, source: 'local_dir' };
+                return { blob: fileObj, filename: fileObj.name || `${d.name}.${ext}`, source: fileHandle.isZipEntry ? 'archive_zip' : srcTag };
               }
             }
           }

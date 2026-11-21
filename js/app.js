@@ -193,11 +193,13 @@ const CalibreApp = (function () {
   }
 
   function renderAvailableFileCard(epubBlobInfo) {
-    const originText = epubBlobInfo.source === 'local_dir'
-      ? 'dossier local'
-      : epubBlobInfo.source === 'indexeddb'
-        ? 'stockage PWA'
-        : 'bibliothèque démo';
+    const originText = epubBlobInfo.source === 'archive_zip'
+      ? 'archive ZIP locale'
+      : epubBlobInfo.source === 'local_dir'
+        ? 'dossier local'
+        : epubBlobInfo.source === 'indexeddb'
+          ? 'stockage PWA'
+          : 'bibliothèque démo';
     const filename = epubBlobInfo.filename || 'ebook.epub';
     const sizeStr = formatBytes(epubBlobInfo.blob.size || 0);
 
@@ -925,8 +927,12 @@ const CalibreApp = (function () {
       }
     });
 
-    // Local Directory Settings Handlers
+    // Local Directory & ZIP Archive Settings Handlers
     document.getElementById('btn-define-local-dir').addEventListener('click', defineLocalDirectory);
+    const btnDefineZip = document.getElementById('btn-define-local-zip');
+    if (btnDefineZip) {
+      btnDefineZip.addEventListener('click', defineLocalZipArchive);
+    }
     document.getElementById('btn-rescan-local-dir').addEventListener('click', rescanLocalDirectory);
     document.getElementById('btn-disconnect-local-dir').addEventListener('click', disconnectLocalDirectory);
 
@@ -940,6 +946,17 @@ const CalibreApp = (function () {
       updateLocalDirectoryUI();
       inputFolderFallback.value = '';
     });
+
+    // Hidden ZIP archive input for fallback / mobile file selection
+    const inputZipLibrary = document.getElementById('input-zip-library');
+    if (inputZipLibrary) {
+      inputZipLibrary.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        await handleZipArchiveImport(file);
+        inputZipLibrary.value = '';
+      });
+    }
 
     // Database Actions
     const fileDbInput = document.getElementById('input-file-db');
@@ -1197,7 +1214,7 @@ const CalibreApp = (function () {
   }
 
   /**
-   * Local Directory Settings Management
+   * Local Directory & ZIP Archive Settings Management
    */
   async function defineLocalDirectory() {
     if ('showDirectoryPicker' in window) {
@@ -1230,10 +1247,69 @@ const CalibreApp = (function () {
     }
   }
 
+  /**
+   * Open a Calibre Library .ZIP Archive (containing metadata.db at root + EPUB subfolders)
+   * Uses Zero-Copy Central Directory Indexing (File.slice) without loading the entire ZIP in RAM!
+   */
+  async function defineLocalZipArchive() {
+    if ('showOpenFilePicker' in window) {
+      try {
+        const [fileHandle] = await window.showOpenFilePicker({
+          multiple: false,
+          types: [
+            {
+              description: 'Archive Bibliothèque Calibre (.zip)',
+              accept: { 'application/zip': ['.zip'] }
+            }
+          ]
+        });
+        if (!fileHandle) return;
+
+        showToast('Indexation rapide du répertoire central ZIP...', 'info');
+        const res = await CalibreDB.setLocalZipHandle(fileHandle);
+        onZipArchiveConnected(res);
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          document.getElementById('input-zip-library')?.click();
+        }
+      }
+    } else {
+      document.getElementById('input-zip-library')?.click();
+    }
+  }
+
+  async function handleZipArchiveImport(file) {
+    if (!file) return;
+    try {
+      showToast('Indexation rapide du répertoire central ZIP...', 'info');
+      const res = await CalibreDB.registerZipFile(file, false);
+      onZipArchiveConnected(res);
+    } catch (err) {
+      console.error('Erreur lecture archive ZIP:', err);
+      showToast('Erreur archive ZIP : ' + err.message, 'error');
+    }
+  }
+
+  function onZipArchiveConnected(res) {
+    updateLocalDirectoryUI();
+    if (res.hasMetadataDb) {
+      const cleanTitle = (res.name || 'calibre.zip').replace(/\.zip$/i, '');
+      updateHeaderLibraryTitle(cleanTitle);
+      updateDbStatusBadge(`📦 ${res.name}`, 'badge-success');
+      showToast(`✓ Archive ZIP chargée (${res.epubsCount} EPUBs + metadata.db) !`, 'success');
+      refreshStats();
+      renderTagBrowserTree();
+      switchTab('books');
+    } else {
+      showToast(`✓ Archive ZIP connectée (${res.epubsCount} EPUBs indexés).`, 'success');
+      if (state.currentTab === 'books') loadBooks(true);
+    }
+  }
+
   async function rescanLocalDirectory() {
     const dirInfo = CalibreDB.getLocalDirectoryInfo();
-    if (!dirInfo.handle) {
-      showToast('Aucun dossier local sélectionné.', 'warning');
+    if (!dirInfo.handle && !dirInfo.zipFile) {
+      showToast('Aucun dossier ou fichier ZIP sélectionné.', 'warning');
       return;
     }
 
@@ -1244,6 +1320,17 @@ const CalibreApp = (function () {
         updateLocalDirectoryUI();
         return;
       }
+      const updated = CalibreDB.getLocalDirectoryInfo();
+      showToast(`Accès rétabli : ${updated.epubsCount} EPUBs disponibles.`, 'success');
+      updateLocalDirectoryUI();
+      return;
+    }
+
+    if (dirInfo.sourceType === 'zip' && dirInfo.zipFile) {
+      showToast('Ré-indexation de l\'archive ZIP...', 'info');
+      const res = await CalibreDB.registerZipFile(dirInfo.zipFile, Boolean(dirInfo.handle));
+      onZipArchiveConnected(res);
+      return;
     }
 
     showToast('Ré-indexation des fichiers locaux...', 'info');
@@ -1254,10 +1341,10 @@ const CalibreApp = (function () {
   }
 
   async function disconnectLocalDirectory() {
-    if (!confirm('Voulez-vous déconnecter le dossier local des livres ?')) return;
+    if (!confirm('Voulez-vous déconnecter le répertoire / fichier ZIP local des livres ?')) return;
     await CalibreDB.removeLocalDirectory();
     updateLocalDirectoryUI();
-    showToast('Dossier local déconnecté.', 'info');
+    showToast('Source locale déconnectée.', 'info');
   }
 
   function updateLocalDirectoryUI() {
@@ -1270,19 +1357,22 @@ const CalibreApp = (function () {
     const btnDisconnect = document.getElementById('btn-disconnect-local-dir');
     if (!card) return;
 
+    const isZip = info.sourceType === 'zip';
+    const prefixIcon = isZip ? '📦 Archive ZIP : ' : '📁 Dossier : ';
+
     if (info.status === 'connected') {
       card.className = 'local-dir-card connected';
-      statusBadge.textContent = 'Connecté';
+      statusBadge.textContent = isZip ? 'Archive ZIP connectée' : 'Dossier connecté';
       statusBadge.className = 'status-badge badge-success';
-      pathDisplay.textContent = info.name || 'Dossier Calibre';
-      countDisplay.textContent = `${info.epubsCount.toLocaleString('fr-FR')} EPUBs indexés`;
+      pathDisplay.textContent = prefixIcon + (info.name || 'Bibliothèque Calibre');
+      countDisplay.textContent = `${info.epubsCount.toLocaleString('fr-FR')} EPUBs indexés (accès direct sans surcharge RAM)`;
       btnRescan.hidden = false;
       btnDisconnect.hidden = false;
     } else if (info.status === 'needs_permission') {
       card.className = 'local-dir-card';
       statusBadge.textContent = 'Autorisation requise';
       statusBadge.className = 'status-badge badge-warning';
-      pathDisplay.textContent = `${info.name} (Cliquez sur Ré-indexer pour autoriser)`;
+      pathDisplay.textContent = `${prefixIcon}${info.name} (Cliquez sur Ré-indexer pour autoriser l'accès)`;
       countDisplay.textContent = "En attente d'autorisation";
       btnRescan.hidden = false;
       btnDisconnect.hidden = false;
@@ -1290,7 +1380,7 @@ const CalibreApp = (function () {
       card.className = 'local-dir-card';
       statusBadge.textContent = 'Non configuré';
       statusBadge.className = 'status-badge badge-warning';
-      pathDisplay.textContent = 'Aucun répertoire local défini pour les livres';
+      pathDisplay.textContent = 'Aucun répertoire local ou fichier .ZIP défini';
       countDisplay.textContent = '0 EPUBs';
       btnRescan.hidden = true;
       btnDisconnect.hidden = true;
@@ -2575,6 +2665,9 @@ const CalibreApp = (function () {
           <button class="btn btn-primary" onclick="CalibreApp.defineLocalDirectory()">
             📁 Définir le dossier local des livres
           </button>
+          <button class="btn btn-primary" onclick="CalibreApp.defineLocalZipArchive()" style="background: var(--surface-3); border: 1px solid var(--accent); color: var(--text);">
+            📦 Ouvrir une archive .ZIP (metadata.db + EPUBs)
+          </button>
           <button class="btn btn-secondary" onclick="document.getElementById('input-file-db').click()">
             🗄️ Charger metadata.db
           </button>
@@ -2603,6 +2696,7 @@ const CalibreApp = (function () {
     resetAndGoBooks,
     openTagDrawer,
     defineLocalDirectory,
+    defineLocalZipArchive,
     rescanLocalDirectory,
     disconnectLocalDirectory,
     loadDemoDatabase,

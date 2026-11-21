@@ -175,6 +175,57 @@ const CalibreStorage = (function () {
     },
 
     /**
+     * Save FileSystemFileHandle for a Calibre Library ZIP archive
+     */
+    async saveZipFileHandle(handle) {
+      const db = await openDatabase();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('settings', 'readwrite');
+        const store = tx.objectStore('settings');
+
+        const req = store.put({
+          key: 'local_library_zip_handle',
+          handle: handle,
+          name: handle.name,
+          savedAt: Date.now()
+        });
+
+        req.onsuccess = () => resolve(true);
+        req.onerror = (e) => reject(e.target.error);
+      });
+    },
+
+    /**
+     * Retrieve saved FileSystemFileHandle for a Calibre Library ZIP archive
+     */
+    async getZipFileHandle() {
+      const db = await openDatabase();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('settings', 'readonly');
+        const store = tx.objectStore('settings');
+        const req = store.get('local_library_zip_handle');
+
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = (e) => reject(e.target.error);
+      });
+    },
+
+    /**
+     * Remove saved ZIP FileHandle
+     */
+    async removeZipFileHandle() {
+      const db = await openDatabase();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('settings', 'readwrite');
+        const store = tx.objectStore('settings');
+        const req = store.delete('local_library_zip_handle');
+
+        req.onsuccess = () => resolve(true);
+        req.onerror = (e) => reject(e.target.error);
+      });
+    },
+
+    /**
      * Reading progress (CFI, percentage)
      */
     async saveProgress(bookId, progress) {

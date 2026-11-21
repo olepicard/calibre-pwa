@@ -162,6 +162,11 @@
         <span class="calibre-tool-label">Dossier EPUB</span>
       </button>
 
+      <button type="button" class="calibre-tool-btn" onclick="CalibreApp.defineLocalZipArchive()" title="Ouvrir une bibliothèque Calibre compressée (.zip avec metadata.db à la racine)">
+        <span class="calibre-tool-icon icon-zip" aria-hidden="true">📦</span>
+        <span class="calibre-tool-label">Archive ZIP</span>
+      </button>
+
       <button type="button" class="calibre-tool-btn" onclick="CalibreApp.saveSelectedToDisk()" title="Enregistrer sur le disque / Exporter la base">
         <span class="calibre-tool-icon icon-save" aria-hidden="true">💾</span>
         <span class="calibre-tool-label">Enregistrer</span>
@@ -448,30 +453,34 @@
       <!-- Stats Grid -->
       <div id="stats-summary" class="stats-grid"></div>
 
-      <!-- 1. Dedicated Local EPUB Directory Configuration Card -->
+      <!-- 1. Dedicated Local EPUB Directory or ZIP Archive Configuration Card -->
       <div id="local-dir-card" class="local-dir-card">
         <div class="dir-header">
-          <div class="dir-title">📁 Répertoire local des livres (EPUB)</div>
+          <div class="dir-title">📁 Répertoire local ou Archive .ZIP (metadata.db + EPUBs)</div>
           <span id="dir-status-badge" class="status-badge badge-warning">Non configuré</span>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-muted);">
-          Définissez le dossier local sur votre smartphone Android ou PC contenant vos livres EPUB et leurs couvertures. L'application lira directement les fichiers depuis ce dossier.
+          Définissez soit un <strong>dossier local</strong>, soit un <strong>fichier .ZIP</strong> contenant <code>metadata.db</code> à sa racine et vos sous-dossiers d'ebooks EPUB. Lecture directe par accès aléatoire (<code>File.slice</code>) sans décompresser toute l'archive en mémoire.
         </p>
 
         <div id="dir-path-display" class="dir-path-display">
-          Aucun répertoire local défini
+          Aucun répertoire ou fichier .ZIP défini
         </div>
 
         <div class="dir-stats-row">
           <span>Livres EPUB détectés : <strong id="dir-epubs-count">0</strong></span>
         </div>
 
-        <!-- Hidden directory inputs -->
+        <!-- Hidden directory & ZIP inputs -->
         <input type="file" id="input-folder-fallback" webkitdirectory directory multiple style="display: none;">
+        <input type="file" id="input-zip-library" accept=".zip,application/zip" style="display: none;">
 
         <div class="settings-actions">
           <button type="button" id="btn-define-local-dir" class="btn btn-primary">
-            📁 Choisir le dossier local (EPUBs)
+            📁 Choisir un dossier local (EPUBs)
+          </button>
+          <button type="button" id="btn-define-local-zip" class="btn btn-primary" style="background: var(--surface-3); border: 1px solid var(--accent); color: var(--text);">
+            📦 Choisir une archive .ZIP (metadata.db + EPUBs)
           </button>
           <button type="button" id="btn-rescan-local-dir" class="btn btn-secondary" hidden>
             🔄 Ré-indexer les fichiers
