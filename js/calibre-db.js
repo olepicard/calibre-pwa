@@ -26,9 +26,73 @@ const CalibreDB = (function () {
   const bookIdCoverMap = new Map();  // Calibre numeric bookId (e.g. 34967) -> cover handle/entry
   const bookIdEpubMap = new Map();   // Calibre numeric bookId (e.g. 34967) -> epub handle/entry
   let lastZipError = null;
+  let lastHandleRefreshTime = 0;
 
-  // Cache of created object URLs to release on unload
+  // Bounded LRU Cache of cover ObjectURLs (bookId -> objectUrl) to keep RAM < 15 MB
+  const MAX_COVER_URL_CACHE = 180;
+  const coverUrlCache = new Map();
+  const inFlightCoverPromises = new Map();
   const createdObjectUrls = new Set();
+
+  // Idle background queue for persisting extracted covers to IndexedDB without blocking scroll
+  const pendingCoverSaves = [];
+  let isFlushingCoverSaves = false;
+
+  function getCachedCoverUrl(bookId) {
+    if (!coverUrlCache.has(bookId)) return null;
+    const url = coverUrlCache.get(bookId);
+    // Refresh LRU order
+    coverUrlCache.delete(bookId);
+    coverUrlCache.set(bookId, url);
+    return url;
+  }
+
+  function setCachedCoverUrl(bookId, blobOrFile) {
+    if (!blobOrFile) return null;
+    if (coverUrlCache.has(bookId)) {
+      return getCachedCoverUrl(bookId);
+    }
+    const url = URL.createObjectURL(blobOrFile);
+    createdObjectUrls.add(url);
+    coverUrlCache.set(bookId, url);
+
+    if (coverUrlCache.size > MAX_COVER_URL_CACHE) {
+      const oldestKey = coverUrlCache.keys().next().value;
+      const oldestUrl = coverUrlCache.get(oldestKey);
+      coverUrlCache.delete(oldestKey);
+      if (oldestUrl) {
+        try { URL.revokeObjectURL(oldestUrl); } catch (e) {}
+        createdObjectUrls.delete(oldestUrl);
+      }
+    }
+    return url;
+  }
+
+  function queueIdleCoverSave(bookId, blob) {
+    if (!bookId || !blob) return;
+    if (pendingCoverSaves.length >= 60) {
+      pendingCoverSaves.shift();
+    }
+    pendingCoverSaves.push({ bookId, blob });
+    if (!isFlushingCoverSaves) {
+      isFlushingCoverSaves = true;
+      const schedule = window.requestIdleCallback || ((cb) => setTimeout(cb, 350));
+      schedule(flushNextCoverSave);
+    }
+  }
+
+  async function flushNextCoverSave() {
+    if (pendingCoverSaves.length === 0) {
+      isFlushingCoverSaves = false;
+      return;
+    }
+    const item = pendingCoverSaves.shift();
+    try {
+      await CalibreStorage.saveCover(item.bookId, item.blob);
+    } catch (e) {}
+    const schedule = window.requestIdleCallback || ((cb) => setTimeout(cb, 250));
+    schedule(flushNextCoverSave);
+  }
 
   /**
    * Initialize sql.js WebAssembly engine
@@ -270,84 +334,190 @@ const CalibreDB = (function () {
     return out;
   }
 
-  // Concurrency queue for Android ContentResolver File.slice() extractions (max 3 simultaneous reads)
+  // Concurrency & Priority Queue for Android/Windows File.slice() extractions (max 3 simultaneous reads)
   let activeZipExtractions = 0;
   const zipExtractionWaiters = [];
+  const MAX_LOW_PRIORITY_WAITERS = 24;
 
-  async function acquireZipSlot() {
+  function withTimeout(promise, ms, label) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Timeout (${ms}ms) dépassé lors de : ${label}`));
+      }, ms);
+      promise.then(
+        (val) => {
+          clearTimeout(timer);
+          resolve(val);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  }
+
+  /**
+   * Self-healing ZIP File snapshot getter:
+   * Automatically refreshes `localZipFile` from `localZipHandle.getFile()` (or <input type="file">)
+   * if >12 seconds have elapsed or if forceRefresh is requested after a NotReadableError.
+   */
+  async function getFreshZipFile(forceRefresh = false) {
+    const now = Date.now();
+    if (!forceRefresh && localZipFile && (now - lastHandleRefreshTime < 12000)) {
+      return localZipFile;
+    }
+
+    if (localZipHandle && typeof localZipHandle.getFile === 'function') {
+      try {
+        if (forceRefresh && typeof localZipHandle.queryPermission === 'function') {
+          const perm = await localZipHandle.queryPermission({ mode: 'read' });
+          if (perm !== 'granted' && typeof localZipHandle.requestPermission === 'function') {
+            try { await localZipHandle.requestPermission({ mode: 'read' }); } catch (e) {}
+          }
+        }
+        const refreshed = await withTimeout(localZipHandle.getFile(), 3500, 'localZipHandle.getFile()');
+        if (refreshed && refreshed.size > 0) {
+          localZipFile = refreshed;
+          lastHandleRefreshTime = Date.now();
+          localDirectoryStatus = 'connected';
+          return localZipFile;
+        }
+      } catch (err) {
+        console.warn('Rafraîchissement auto de localZipHandle.getFile() échoué:', err);
+      }
+    }
+
+    // Fallback for Android <input type="file" id="input-zip-library">
+    if (typeof document !== 'undefined') {
+      const zipInput = document.getElementById('input-zip-library');
+      if (zipInput && zipInput.files && zipInput.files[0]) {
+        localZipFile = zipInput.files[0];
+        lastHandleRefreshTime = Date.now();
+        localDirectoryStatus = 'connected';
+        return localZipFile;
+      }
+    }
+
+    return localZipFile;
+  }
+
+  async function acquireZipSlot(highPriority = false) {
     if (activeZipExtractions < 3) {
       activeZipExtractions++;
-      return;
+      return true;
     }
-    await new Promise((resolve) => zipExtractionWaiters.push(resolve));
+    // If low-priority scroll queue is full, evict the oldest scrolled-past waiter so visible books never stall
+    if (!highPriority && zipExtractionWaiters.length >= MAX_LOW_PRIORITY_WAITERS) {
+      const oldIdx = zipExtractionWaiters.findIndex((w) => !w.highPriority);
+      if (oldIdx !== -1) {
+        const [evicted] = zipExtractionWaiters.splice(oldIdx, 1);
+        evicted.resolve(false);
+      }
+    }
+    const acquired = await new Promise((resolve) => {
+      const waiter = { resolve, highPriority: Boolean(highPriority) };
+      if (highPriority) {
+        zipExtractionWaiters.unshift(waiter);
+      } else {
+        zipExtractionWaiters.push(waiter);
+      }
+    });
+    if (!acquired) return false;
     activeZipExtractions++;
+    return true;
   }
 
   function releaseZipSlot() {
     activeZipExtractions = Math.max(0, activeZipExtractions - 1);
     if (zipExtractionWaiters.length > 0) {
       const next = zipExtractionWaiters.shift();
-      next();
+      next.resolve(true);
     }
   }
 
   /**
-   * High-Performance Zero-Copy Random-Access ZIP Entry Extractor
-   * Slices ONLY the target file's compressed byte range from the .zip File on disk,
-   * reads it via 64-bit FileReader arrayBuffer(), and decompresses via DecompressionStream('deflate-raw').
+   * Perform a single slice + decompress attempt against a live File reference
    */
-  async function extractZipEntryToFile(zipFile, entry) {
-    if (!zipFile || !entry) return null;
+  async function readAndDecompressZipEntry(activeFile, entry) {
+    const lhBuf = await activeFile.slice(entry.localHeaderOffset, entry.localHeaderOffset + 30).arrayBuffer();
+    const lhView = new DataView(lhBuf);
+    if (lhView.getUint32(0, true) !== 0x04034b50) {
+      throw new Error('En-tête local ZIP invalide pour ' + entry.name);
+    }
 
-    await acquireZipSlot();
+    const localNameLen = lhView.getUint16(26, true);
+    const localExtraLen = lhView.getUint16(28, true);
+    const dataStart = entry.localHeaderOffset + 30 + localNameLen + localExtraLen;
+    const rawSlice = activeFile.slice(dataStart, dataStart + entry.compressedSize);
+
+    const ext = entry.name.split('.').pop().toLowerCase();
+    const mimeMap = {
+      epub: 'application/epub+zip',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      db: 'application/x-sqlite3',
+      pdf: 'application/pdf'
+    };
+    const mimeType = mimeMap[ext] || 'application/octet-stream';
+
+    if (entry.compressionMethod === 0) {
+      const storeBuf = await rawSlice.arrayBuffer();
+      return new File([storeBuf], entry.name, { type: mimeType });
+    }
+
+    if (entry.compressionMethod === 8) {
+      const compBuf = await rawSlice.arrayBuffer();
+      if (typeof DecompressionStream === 'function') {
+        const ds = new DecompressionStream('deflate-raw');
+        const memStream = new Blob([compBuf]).stream().pipeThrough(ds);
+        const decompressedBuf = await new Response(memStream).arrayBuffer();
+        return new File([decompressedBuf], entry.name, { type: mimeType });
+      }
+      throw new Error('DecompressionStream non supporté sur ce navigateur.');
+    }
+
+    throw new Error(`Méthode de compression ZIP (${entry.compressionMethod}) non supportée.`);
+  }
+
+  /**
+   * High-Performance Self-Healing Random-Access ZIP Entry Extractor
+   * Automatically refreshes stale File handles and bounds execution with a watchdog timeout.
+   */
+  async function extractZipEntryToFile(entry, highPriority = false) {
+    if (!entry) return null;
+
+    const gotSlot = await acquireZipSlot(highPriority);
+    if (!gotSlot) {
+      // Skipped because user scrolled past this low-priority cover
+      return null;
+    }
+
+    const timeoutMs = entry.compressedSize > 2 * 1024 * 1024 ? 12000 : 4500;
     try {
-      // 1. Read the 30-byte Local File Header at entry.localHeaderOffset
-      const lhBuf = await zipFile.slice(entry.localHeaderOffset, entry.localHeaderOffset + 30).arrayBuffer();
-      const lhView = new DataView(lhBuf);
-      if (lhView.getUint32(0, true) !== 0x04034b50) {
-        throw new Error('En-tête local ZIP invalide pour ' + entry.name);
+      let activeFile = await getFreshZipFile(false);
+      if (!activeFile) return null;
+
+      try {
+        return await withTimeout(
+          readAndDecompressZipEntry(activeFile, entry),
+          timeoutMs,
+          `extraction ZIP ${entry.name}`
+        );
+      } catch (firstErr) {
+        // Automatic transparent self-healing: force-refresh the File snapshot from localZipHandle / input and retry once!
+        activeFile = await getFreshZipFile(true);
+        if (!activeFile) throw firstErr;
+        return await withTimeout(
+          readAndDecompressZipEntry(activeFile, entry),
+          timeoutMs,
+          `retry extraction ZIP ${entry.name}`
+        );
       }
-
-      const localNameLen = lhView.getUint16(26, true);
-      const localExtraLen = lhView.getUint16(28, true);
-      const dataStart = entry.localHeaderOffset + 30 + localNameLen + localExtraLen;
-      const rawSlice = zipFile.slice(dataStart, dataStart + entry.compressedSize);
-
-      const ext = entry.name.split('.').pop().toLowerCase();
-      const mimeMap = {
-        epub: 'application/epub+zip',
-        jpg: 'image/jpeg',
-        jpeg: 'image/jpeg',
-        png: 'image/png',
-        db: 'application/x-sqlite3',
-        pdf: 'application/pdf'
-      };
-      const mimeType = mimeMap[ext] || 'application/octet-stream';
-
-      // Method 0: STORE (uncompressed — read slice into memory buffer so Android content:// handle isn't held)
-      if (entry.compressionMethod === 0) {
-        const storeBuf = await rawSlice.arrayBuffer();
-        return new File([storeBuf], entry.name, { type: mimeType });
-      }
-
-      // Method 8: DEFLATE
-      // Read compressed slice into an in-memory ArrayBuffer first via 64-bit slice().arrayBuffer()
-      // (avoids Android Chromium content:// >4GB Blob.stream() bug when piping directly to DecompressionStream!)
-      if (entry.compressionMethod === 8) {
-        const compBuf = await rawSlice.arrayBuffer();
-        if (typeof DecompressionStream === 'function') {
-          const ds = new DecompressionStream('deflate-raw');
-          const memStream = new Blob([compBuf]).stream().pipeThrough(ds);
-          const decompressedBuf = await new Response(memStream).arrayBuffer();
-          return new File([decompressedBuf], entry.name, { type: mimeType });
-        }
-        throw new Error('DecompressionStream non supporté sur ce navigateur.');
-      }
-
-      throw new Error(`Méthode de compression ZIP (${entry.compressionMethod}) non supportée.`);
     } catch (err) {
       lastZipError = err.message || String(err);
-      console.error('Erreur extraction entrée ZIP:', entry.name, err);
+      console.warn('Erreur extraction entrée ZIP (après auto-refresh):', entry.name, err);
       throw err;
     } finally {
       releaseZipSlot();
@@ -364,6 +534,8 @@ const CalibreDB = (function () {
     coverIndex.clear();
     bookIdCoverMap.clear();
     bookIdEpubMap.clear();
+    localZipFile = zipFile;
+    lastHandleRefreshTime = Date.now();
     lastZipError = null;
 
     const fileSize = zipFile.size;
@@ -513,8 +685,8 @@ const CalibreDB = (function () {
         compressedSize: item.compressedSize,
         uncompressedSize: item.uncompressedSize,
         localHeaderOffset: item.localHeaderOffset,
-        async getFile() {
-          return extractZipEntryToFile(zipFile, this);
+        async getFile(highPriority = false) {
+          return extractZipEntryToFile(this, highPriority);
         }
       };
 
@@ -779,7 +951,9 @@ const CalibreDB = (function () {
       coverIndex.clear();
       bookIdCoverMap.clear();
       bookIdEpubMap.clear();
-      lastZipError = null;
+      localZipFile = zipFile;
+    lastHandleRefreshTime = Date.now();
+    lastZipError = null;
       await CalibreStorage.removeDirectoryHandle();
       await CalibreStorage.removeZipFileHandle();
     },
@@ -2013,102 +2187,147 @@ const CalibreDB = (function () {
     },
 
     /**
-     * Retrieve cover URL (from IndexedDB cache, O(1) bookIdCoverMap, local folder, or generated SVG)
+     * Check whether a real cover URL is currently cached in memory for a bookId
      */
-    async getCoverUrl(book) {
+    hasRealCoverCached(bookId) {
+      return Boolean(getCachedCoverUrl(Number(bookId)));
+    },
+
+    /**
+     * Lightweight non-blocking health check & handle refresh for ZIP / local directory sources
+     */
+    async ensureSourceAlive() {
+      if (localSourceType === 'zip') {
+        const file = await getFreshZipFile(false);
+        return Boolean(file && file.size > 0);
+      }
+      if (localDirectoryHandle && typeof localDirectoryHandle.queryPermission === 'function') {
+        try {
+          const perm = await localDirectoryHandle.queryPermission({ mode: 'read' });
+          if (perm === 'granted') {
+            localDirectoryStatus = 'connected';
+            return true;
+          }
+        } catch (e) {}
+      }
+      return localFileMap.size > 0 || bookIdCoverMap.size > 0;
+    },
+
+    /**
+     * Retrieve cover URL (from LRU RAM cache, IndexedDB cache, O(1) bookIdCoverMap, local folder, or generated SVG)
+     * Supports { highPriority: true } for Book Detail & 3D Cover Flow so they bypass scroll queues.
+     */
+    async getCoverUrl(book, options = {}) {
       if (!book) return generateNextGenCover('Calibre', '', 0);
       const bookId = Number(book.id);
+      const highPriority = Boolean(options && options.highPriority);
 
-      // 1. Check IndexedDB cover cache (persists across Android reloads!)
-      try {
-        const storedCover = await CalibreStorage.getCover(bookId);
-        if (storedCover) {
-          const url = URL.createObjectURL(storedCover);
-          createdObjectUrls.add(url);
-          return url;
-        }
-      } catch (e) {}
+      // 0. Instant 0ms LRU in-memory cache check
+      if (bookId > 0) {
+        const memUrl = getCachedCoverUrl(bookId);
+        if (memUrl) return memUrl;
 
-      // 2. O(1) direct numeric bookId lookup in ZIP / local index (`...(34967)/cover.jpg`)
-      if (bookId > 0 && bookIdCoverMap.has(bookId)) {
-        try {
-          const entry = bookIdCoverMap.get(bookId);
-          const fileObj = typeof entry.getFile === 'function' ? await entry.getFile() : entry;
-          if (fileObj && fileObj.size > 0) {
-            CalibreStorage.saveCover(bookId, fileObj).catch(() => {});
-            const url = URL.createObjectURL(fileObj);
-            createdObjectUrls.add(url);
-            return url;
-          }
-        } catch (err) {
-          console.warn('Erreur lecture couverture ZIP par ID:', bookId, err);
+        // Deduplicate concurrent requests for the same bookId (unless upgrading to highPriority)
+        if (!highPriority && inFlightCoverPromises.has(bookId)) {
+          return inFlightCoverPromises.get(bookId);
         }
       }
 
-      // 3. Check local directory handle or path map
-      if (book.path) {
-        const basePath = normalizePath(book.path);
+      const loadPromise = (async () => {
+        // 1. Check IndexedDB cover cache (persists across Android & Windows reloads)
+        if (bookId > 0) {
+          try {
+            const storedCover = await withTimeout(CalibreStorage.getCover(bookId), 1800, 'getCover IndexedDB');
+            if (storedCover && storedCover.size > 0) {
+              return setCachedCoverUrl(bookId, storedCover);
+            }
+          } catch (e) {}
+        }
 
-        // A. If we have a connected DirectoryHandle, try resolving directly
-        if (localDirectoryHandle && localDirectoryStatus === 'connected') {
-          for (const candName of ['cover.jpg', 'cover.jpeg', 'cover.png']) {
-            try {
-              const file = await resolveFileInHandle(localDirectoryHandle, `${book.path}/${candName}`);
-              if (file && file.size > 0) {
-                CalibreStorage.saveCover(bookId, file).catch(() => {});
-                const url = URL.createObjectURL(file);
-                createdObjectUrls.add(url);
-                return url;
-              }
-            } catch (e) {}
+        // 2. O(1) direct numeric bookId lookup in ZIP / local index (`...(34967)/cover.jpg`)
+        if (bookId > 0 && bookIdCoverMap.has(bookId)) {
+          try {
+            const entry = bookIdCoverMap.get(bookId);
+            const fileObj = typeof entry.getFile === 'function' ? await entry.getFile(highPriority) : entry;
+            if (fileObj && fileObj.size > 0) {
+              queueIdleCoverSave(bookId, fileObj);
+              return setCachedCoverUrl(bookId, fileObj);
+            }
+          } catch (err) {
+            console.warn('Erreur lecture couverture ZIP par ID:', bookId, err);
           }
         }
 
-        // B. Check coverIndex / localFileMap (works for both Local Directory & ZIP Archive!)
-        for (const cand of [`${basePath}/cover.jpg`, `${basePath}/cover.jpeg`, `${basePath}/cover.png`]) {
-          const match = localFileMap.get(cand) || coverIndex.get(cand);
-          if (match) {
-            try {
-              const fileObj = typeof match.getFile === 'function' ? await match.getFile() : match;
-              if (fileObj && fileObj.size > 0) {
-                CalibreStorage.saveCover(bookId, fileObj).catch(() => {});
-                const url = URL.createObjectURL(fileObj);
-                createdObjectUrls.add(url);
-                return url;
+        // 3. Check local directory handle or path map
+        if (book.path) {
+          const basePath = normalizePath(book.path);
+
+          // A. If we have a connected DirectoryHandle, try resolving directly
+          if (localDirectoryHandle && localDirectoryStatus === 'connected') {
+            for (const candName of ['cover.jpg', 'cover.jpeg', 'cover.png']) {
+              try {
+                const file = await resolveFileInHandle(localDirectoryHandle, `${book.path}/${candName}`);
+                if (file && file.size > 0) {
+                  queueIdleCoverSave(bookId, file);
+                  return setCachedCoverUrl(bookId, file);
+                }
+              } catch (e) {}
+            }
+          }
+
+          // B. Check coverIndex / localFileMap (works for both Local Directory & ZIP Archive!)
+          for (const cand of [`${basePath}/cover.jpg`, `${basePath}/cover.jpeg`, `${basePath}/cover.png`]) {
+            const match = localFileMap.get(cand) || coverIndex.get(cand);
+            if (match) {
+              try {
+                const fileObj = typeof match.getFile === 'function' ? await match.getFile(highPriority) : match;
+                if (fileObj && fileObj.size > 0) {
+                  queueIdleCoverSave(bookId, fileObj);
+                  return setCachedCoverUrl(bookId, fileObj);
+                }
+              } catch (err) {
+                console.warn('Erreur lecture coverIndex:', cand, err);
               }
-            } catch (err) {
-              console.warn('Erreur lecture coverIndex:', cand, err);
+            }
+          }
+
+          // C. Fallback cover match by Calibre book ID suffix `(${bookId})/cover.`
+          const idToken = `(${bookId})/cover.`;
+          for (const [k, handle] of coverIndex.entries()) {
+            if (k.includes(idToken)) {
+              try {
+                const fileObj = typeof handle.getFile === 'function' ? await handle.getFile(highPriority) : handle;
+                if (fileObj && fileObj.size > 0) {
+                  queueIdleCoverSave(bookId, fileObj);
+                  return setCachedCoverUrl(bookId, fileObj);
+                }
+              } catch (e) {}
             }
           }
         }
 
-        // C. Fallback cover match by Calibre book ID suffix `(${bookId})/cover.`
-        const idToken = `(${bookId})/cover.`;
-        for (const [k, handle] of coverIndex.entries()) {
-          if (k.includes(idToken)) {
-            try {
-              const fileObj = typeof handle.getFile === 'function' ? await handle.getFile() : handle;
-              if (fileObj && fileObj.size > 0) {
-                CalibreStorage.saveCover(bookId, fileObj).catch(() => {});
-                const url = URL.createObjectURL(fileObj);
-                createdObjectUrls.add(url);
-                return url;
-              }
-            } catch (e) {}
-          }
+        // 4. Fallback: generate NextGen SVG cover (NOT stored in coverUrlCache so it can be auto-retried!)
+        let authorText = '';
+        if (Array.isArray(book.authors)) {
+          authorText = book.authors.map(a => (typeof a === 'string' ? a : (a && (a.name || a.sort)) || '')).filter(Boolean).join(', ');
+        } else if (typeof book.authors === 'string') {
+          authorText = book.authors;
+        } else if (book.author_sort) {
+          authorText = String(book.author_sort);
         }
+        return generateNextGenCover(book.title, authorText, book.id);
+      })();
+
+      if (bookId > 0) {
+        inFlightCoverPromises.set(bookId, loadPromise);
+        loadPromise.finally(() => {
+          if (inFlightCoverPromises.get(bookId) === loadPromise) {
+            inFlightCoverPromises.delete(bookId);
+          }
+        });
       }
 
-      // 4. Fallback: generate NextGen SVG cover
-      let authorText = '';
-      if (Array.isArray(book.authors)) {
-        authorText = book.authors.map(a => (typeof a === 'string' ? a : (a && (a.name || a.sort)) || '')).filter(Boolean).join(', ');
-      } else if (typeof book.authors === 'string') {
-        authorText = book.authors;
-      } else if (book.author_sort) {
-        authorText = String(book.author_sort);
-      }
-      return generateNextGenCover(book.title, authorText, book.id);
+      return loadPromise;
     },
 
     /**
@@ -2123,7 +2342,7 @@ const CalibreDB = (function () {
       if (fmt === 'EPUB' && bId > 0 && bookIdEpubMap.has(bId)) {
         try {
           const entry = bookIdEpubMap.get(bId);
-          const fileObj = typeof entry.getFile === 'function' ? await entry.getFile() : entry;
+          const fileObj = typeof entry.getFile === 'function' ? await entry.getFile(true) : entry;
           if (fileObj && fileObj.size > 0) {
             return {
               blob: fileObj,

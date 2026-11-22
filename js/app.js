@@ -800,9 +800,7 @@ const CalibreApp = (function () {
 
       const img = document.createElement('img');
       img.alt = book.title;
-      CalibreDB.getCoverUrl(book).then((url) => {
-        img.src = url;
-      });
+      loadCoverIntoImg(img, book, offset === 0);
       item.appendChild(img);
 
       item.addEventListener('click', () => {
@@ -952,14 +950,25 @@ const CalibreApp = (function () {
     // Theme toggle
     document.getElementById('btn-theme-toggle').addEventListener('click', cycleTheme);
 
-    // Infinite scroll
+    // Infinite scroll + automatic debounced visible-cover self-healing when scroll stops
     window.addEventListener('scroll', () => {
+      scheduleVisibleCoversHeal();
       if (state.currentTab !== 'books' || state.isLoading || !state.hasMore) return;
       const scrollPosition = window.innerHeight + window.scrollY;
       const threshold = document.body.offsetHeight - 500;
       if (scrollPosition >= threshold) {
         loadMoreBooks();
       }
+    }, { passive: true });
+
+    // Transparent cover & file-handle self-healing when returning to the app or waking the smartphone
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        scheduleVisibleCoversHeal(100);
+      }
+    });
+    window.addEventListener('focus', () => {
+      scheduleVisibleCoversHeal(150);
     });
 
     // Local Directory & ZIP Archive Settings Handlers
@@ -1492,6 +1501,130 @@ const CalibreApp = (function () {
     }
   }
 
+  // Viewport-aware Lazy Cover Observer & Transparent Self-Healing System (low CPU / low RAM)
+  const PLACEHOLDER_COVER_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300"><rect width="100%" height="100%" fill="%231a232e"/></svg>';
+  const coverElementBookMap = new WeakMap();
+  let coverLazyObserver = null;
+  let healCoversTimer = null;
+  let isHealingCovers = false;
+
+  function loadCoverIntoImg(img, book, highPriority = false) {
+    if (!img || !book) return;
+    coverElementBookMap.set(img, book);
+    img.dataset.bookId = book.id;
+
+    CalibreDB.getCoverUrl(book, { highPriority }).then((url) => {
+      if (!url) return;
+      const isSvgPlaceholder = url.startsWith('data:image/svg+xml');
+      img.dataset.isPlaceholder = isSvgPlaceholder ? 'true' : 'false';
+      img.src = url;
+    }).catch(() => {
+      img.dataset.isPlaceholder = 'true';
+    });
+  }
+
+  function ensureCoverLazyObserver() {
+    if (coverLazyObserver || typeof IntersectionObserver !== 'function') return coverLazyObserver;
+    coverLazyObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const img = entry.target;
+        coverLazyObserver.unobserve(img);
+        const book = coverElementBookMap.get(img);
+        if (book) {
+          loadCoverIntoImg(img, book, false);
+        }
+      }
+    }, {
+      root: null,
+      rootMargin: '280px 0px',
+      threshold: 0.01
+    });
+    return coverLazyObserver;
+  }
+
+  function observeBookCoverImg(img, book) {
+    coverElementBookMap.set(img, book);
+    img.dataset.bookId = book.id;
+    img.dataset.isPlaceholder = 'true';
+    if (!img.getAttribute('src')) {
+      img.src = PLACEHOLDER_COVER_SVG;
+    }
+
+    // Auto-recover if a blob: URL was evicted from the LRU cache after scrolling far away
+    img.addEventListener('error', () => {
+      if (img.dataset.retrying === 'true') return;
+      img.dataset.retrying = 'true';
+      setTimeout(() => {
+        img.dataset.retrying = 'false';
+        loadCoverIntoImg(img, book, true);
+      }, 200);
+    });
+
+    // If already in the 0ms RAM LRU cache, assign immediately without waiting for observer
+    if (typeof CalibreDB.hasRealCoverCached === 'function' && CalibreDB.hasRealCoverCached(book.id)) {
+      loadCoverIntoImg(img, book, false);
+      return;
+    }
+
+    const obs = ensureCoverLazyObserver();
+    if (obs) {
+      obs.observe(img);
+    } else {
+      loadCoverIntoImg(img, book, false);
+    }
+  }
+
+  /**
+   * Debounced, zero-CPU self-healing pass when scrolling stops or tab wakes up:
+   * Automatically refreshes stale File handles and retries any visible placeholder covers.
+   */
+  function scheduleVisibleCoversHeal(delayMs = 380) {
+    if (healCoversTimer) clearTimeout(healCoversTimer);
+    healCoversTimer = setTimeout(async () => {
+      healCoversTimer = null;
+      if (isHealingCovers || !CalibreDB.isLoaded()) return;
+      isHealingCovers = true;
+      try {
+        if (typeof CalibreDB.ensureSourceAlive === 'function') {
+          await CalibreDB.ensureSourceAlive();
+        }
+        const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+
+        // 1. Heal visible catalog cards that fell back to a placeholder during fast scroll
+        const placeholderImgs = document.querySelectorAll('.book-cover-img[data-is-placeholder="true"]');
+        for (const img of placeholderImgs) {
+          const rect = img.getBoundingClientRect();
+          if (rect.bottom >= -150 && rect.top <= vh + 200 && rect.width > 0) {
+            const book = coverElementBookMap.get(img);
+            if (book) {
+              loadCoverIntoImg(img, book, true);
+            }
+          }
+        }
+
+        // 2. Heal open Book Details sheet cover if it is still showing a placeholder
+        const detailDialog = document.getElementById('book-detail-dialog');
+        if (detailDialog && detailDialog.open && state.selectedBookId) {
+          const modalCover = document.getElementById('modal-book-cover');
+          if (modalCover && modalCover.dataset.isPlaceholder === 'true') {
+            const details = CalibreDB.getBookDetails(state.selectedBookId);
+            if (details) {
+              const url = await CalibreDB.getCoverUrl(details, { highPriority: true });
+              if (url && state.selectedBookId === Number(details.id)) {
+                modalCover.src = url;
+                modalCover.dataset.isPlaceholder = url.startsWith('data:image/svg+xml') ? 'true' : 'false';
+              }
+            }
+          }
+        }
+      } catch (e) {
+      } finally {
+        isHealingCovers = false;
+      }
+    }, delayMs);
+  }
+
   /**
    * Create Calibre Book Card Element (Grid & List views)
    */
@@ -1506,11 +1639,9 @@ const CalibreApp = (function () {
     const img = document.createElement('img');
     img.className = 'book-cover-img';
     img.alt = `Couverture de ${book.title}`;
-    img.loading = 'lazy';
+    img.decoding = 'async';
 
-    CalibreDB.getCoverUrl(book).then((url) => {
-      img.src = url;
-    });
+    observeBookCoverImg(img, book);
 
     coverWrapper.appendChild(img);
 
@@ -1973,6 +2104,7 @@ const CalibreApp = (function () {
 
     // Immediate placeholder cover
     const coverImg = document.getElementById('modal-book-cover');
+    coverImg.dataset.isPlaceholder = 'true';
     coverImg.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300"><rect width="100%" height="100%" fill="%231a232e"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="%2394a3b8" font-family="sans-serif" font-size="14">Couverture...</text></svg>';
 
     // Immediate initial buttons state
@@ -2005,10 +2137,20 @@ const CalibreApp = (function () {
       }
     }).catch(console.warn);
 
-    // Load Cover URL
-    CalibreDB.getCoverUrl(details).then((url) => {
+    // Load Cover URL with top priority (bypasses background scroll queue + auto-refreshes stale ZIP handle)
+    CalibreDB.getCoverUrl(details, { highPriority: true }).then((url) => {
       if (state.selectedBookId === Number(bookId) && url) {
+        const isSvgPlaceholder = url.startsWith('data:image/svg+xml');
+        coverImg.dataset.isPlaceholder = isSvgPlaceholder ? 'true' : 'false';
         coverImg.src = url;
+
+        // Also sync the catalog card image if it was showing a placeholder
+        if (!isSvgPlaceholder) {
+          document.querySelectorAll(`.book-cover-img[data-book-id="${bookId}"]`).forEach((cardImg) => {
+            cardImg.src = url;
+            cardImg.dataset.isPlaceholder = 'false';
+          });
+        }
       }
     }).catch(console.warn);
 
