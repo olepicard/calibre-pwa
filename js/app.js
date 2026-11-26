@@ -267,6 +267,10 @@ const CalibreApp = (function () {
         if (initResult.directoryStatus === 'connected') {
           const icon = initResult.sourceType === 'zip' ? '📦' : '📁';
           updateDbStatusBadge(`${icon} ${initResult.directoryName || initResult.name}`, 'badge-success');
+        } else if (CalibreDB.needsZipPermission()) {
+          updateDbStatusBadge('⚠️ Réactiver .ZIP', 'badge-warning');
+        } else if (CalibreDB.needsZipReconnect()) {
+          updateDbStatusBadge('📦 Connecter .ZIP', 'badge-warning');
         } else if (String(initResult.name || '').toLowerCase().includes('.zip')) {
           updateDbStatusBadge('⚠️ Reconnecter .ZIP', 'badge-warning');
         } else {
@@ -1307,6 +1311,33 @@ const CalibreApp = (function () {
   }
 
   /**
+   * One-click ZIP Archive Reconnection / Permission Recovery
+   * On desktop: requests read permission on the saved FileSystemFileHandle in 1 click (no re-picker needed!)
+   * On mobile/Android: opens file picker to re-link the ZIP in 1 tap.
+   */
+  async function reconnectZipArchive() {
+    if (typeof CalibreDB.needsZipPermission === 'function' && CalibreDB.needsZipPermission()) {
+      showToast("Demande d'autorisation pour l'archive ZIP...", 'info');
+      try {
+        const res = await CalibreDB.requestZipPermission();
+        if (res && res.success) {
+          updateLocalDirectoryUI();
+          showToast(`✓ Archive ZIP réactivée (${res.stats.epubsCount.toLocaleString('fr-FR')} EPUBs + jaquettes) !`, 'success');
+          if (state.currentTab !== 'books') {
+            switchTab('books');
+          } else {
+            loadBooks(true);
+          }
+          return;
+        }
+      } catch (e) {
+        console.warn('Erreur activation permission ZIP:', e);
+      }
+    }
+    defineLocalZipArchive();
+  }
+
+  /**
    * Open a Calibre Library .ZIP Archive (containing metadata.db at root + EPUB subfolders)
    * Uses Zero-Copy Central Directory Indexing (File.slice) without loading the entire ZIP in RAM!
    */
@@ -1459,6 +1490,29 @@ const CalibreApp = (function () {
       btnRescan.hidden = true;
       btnDisconnect.hidden = true;
     }
+
+    // Update Standby Reconnect Banner on Books tab
+    const standbyBanner = document.getElementById('zip-standby-banner');
+    const standbyTitle = document.getElementById('zip-standby-title');
+    const standbyDesc = document.getElementById('zip-standby-desc');
+    const btnReactivate = document.getElementById('btn-reactivate-zip');
+
+    if (standbyBanner) {
+      if (typeof CalibreDB.needsZipReconnect === 'function' && CalibreDB.needsZipReconnect()) {
+        standbyBanner.hidden = false;
+        if (typeof CalibreDB.needsZipPermission === 'function' && CalibreDB.needsZipPermission()) {
+          if (standbyTitle) standbyTitle.textContent = `📦 Archive ZIP « ${info.name || 'Calibre'} » en veille`;
+          if (standbyDesc) standbyDesc.textContent = "Cliquez pour réactiver l'accès et afficher immédiatement les jaquettes.";
+          if (btnReactivate) btnReactivate.textContent = "⚡ Réactiver en 1 clic";
+        } else {
+          if (standbyTitle) standbyTitle.textContent = `📦 Archive ZIP « ${info.name || 'Calibre'} » non connectée`;
+          if (standbyDesc) standbyDesc.textContent = "Re-sélectionnez votre archive .ZIP pour afficher toutes les jaquettes et lire vos livres.";
+          if (btnReactivate) btnReactivate.textContent = "📦 Connecter l'archive .ZIP";
+        }
+      } else {
+        standbyBanner.hidden = true;
+      }
+    }
   }
 
   /**
@@ -1518,8 +1572,12 @@ const CalibreApp = (function () {
       const isSvgPlaceholder = url.startsWith('data:image/svg+xml');
       img.dataset.isPlaceholder = isSvgPlaceholder ? 'true' : 'false';
       img.src = url;
+      if (isSvgPlaceholder) {
+        scheduleVisibleCoversHeal(500);
+      }
     }).catch(() => {
       img.dataset.isPlaceholder = 'true';
+      scheduleVisibleCoversHeal(700);
     });
   }
 
@@ -1692,7 +1750,16 @@ const CalibreApp = (function () {
     card.appendChild(coverWrapper);
     card.appendChild(info);
 
-    card.addEventListener('click', () => {
+    card.addEventListener('click', async () => {
+      if (typeof CalibreDB.needsZipPermission === 'function' && CalibreDB.needsZipPermission()) {
+        try {
+          const res = await CalibreDB.requestZipPermission();
+          if (res && res.success) {
+            updateLocalDirectoryUI();
+            scheduleVisibleCoversHeal(100);
+          }
+        } catch (e) {}
+      }
       selectBookInCatalog(book.id, true);
       openBookDetail(book.id);
     });
@@ -1868,6 +1935,8 @@ const CalibreApp = (function () {
 
     state.isLoading = false;
     document.getElementById('loading-indicator').hidden = true;
+    scheduleVisibleCoversHeal(250);
+    scheduleVisibleCoversHeal(1200);
 
     const emptyEl = document.getElementById('no-books-found');
     if (emptyEl) {
@@ -1885,6 +1954,16 @@ const CalibreApp = (function () {
    * Open Calibre Content Server Book Details Sheet (shot5_web_content_server.png)
    */
   async function openBookDetail(bookId) {
+    if (typeof CalibreDB.needsZipPermission === 'function' && CalibreDB.needsZipPermission()) {
+      try {
+        const permRes = await CalibreDB.requestZipPermission();
+        if (permRes && permRes.success) {
+          updateLocalDirectoryUI();
+          scheduleVisibleCoversHeal(100);
+        }
+      } catch (e) {}
+    }
+
     state.selectedBookId = Number(bookId);
     selectBookInCatalog(bookId, true);
 
@@ -2904,6 +2983,7 @@ const CalibreApp = (function () {
     openTagDrawer,
     defineLocalDirectory,
     defineLocalZipArchive,
+    reconnectZipArchive,
     rescanLocalDirectory,
     disconnectLocalDirectory,
     loadDemoDatabase,

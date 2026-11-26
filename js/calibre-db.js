@@ -334,10 +334,10 @@ const CalibreDB = (function () {
     return out;
   }
 
-  // Concurrency & Priority Queue for Android/Windows File.slice() extractions (max 3 simultaneous reads)
+  // Concurrency & Priority Queue for Android/Windows File.slice() extractions (max 4 simultaneous reads)
   let activeZipExtractions = 0;
   const zipExtractionWaiters = [];
-  const MAX_LOW_PRIORITY_WAITERS = 24;
+  const MAX_LOW_PRIORITY_WAITERS = 200;
 
   function withTimeout(promise, ms, label) {
     return new Promise((resolve, reject) => {
@@ -403,7 +403,7 @@ const CalibreDB = (function () {
   }
 
   async function acquireZipSlot(highPriority = false) {
-    if (activeZipExtractions < 3) {
+    if (activeZipExtractions < 4) {
       activeZipExtractions++;
       return true;
     }
@@ -736,6 +736,18 @@ const CalibreDB = (function () {
         await this.restoreSavedDirectoryHandle();
       }
 
+      // 1.b Check if a ZIP archive was configured previously (even without FileHandle on Android)
+      if (localDirectoryStatus === 'none') {
+        try {
+          const lastSource = await CalibreStorage.getSetting('last_library_source', null);
+          if (lastSource && lastSource.type === 'zip') {
+            localSourceType = 'zip';
+            localDirectoryName = lastSource.name || 'Bibliothèque Calibre.zip';
+            localDirectoryStatus = 'needs_reconnect';
+          }
+        } catch (e) {}
+      }
+
       // 2. Try loading metadata.db from IndexedDB
       const saved = await CalibreStorage.getMetadataDB();
       if (saved && saved.data) {
@@ -884,6 +896,12 @@ const CalibreDB = (function () {
       localDirectoryStatus = 'connected';
 
       const stats = await parseAndIndexZipFile(file);
+      await CalibreStorage.setSetting('last_library_source', {
+        type: 'zip',
+        name: localDirectoryName,
+        size: file ? file.size : 0,
+        savedAt: Date.now()
+      });
 
       // Automatically extract and load metadata.db if present at the root of the ZIP!
       const dbFile = await this.findMetadataDbInMap();
@@ -2184,6 +2202,41 @@ const CalibreDB = (function () {
       const exported = dbInstance.export();
       await CalibreStorage.saveMetadataDB(exported, dbName || 'metadata.db');
       return true;
+    },
+
+    /**
+     * Check if a saved ZIP FileHandle is waiting for user gesture permission
+     */
+    needsZipPermission() {
+      return Boolean(localSourceType === 'zip' && localDirectoryStatus === 'needs_permission' && localZipHandle);
+    },
+
+    /**
+     * Check if a ZIP source was previously configured but is currently disconnected or in standby
+     */
+    needsZipReconnect() {
+      return Boolean(localSourceType === 'zip' && localDirectoryStatus !== 'connected');
+    },
+
+    /**
+     * Request permission on saved ZIP FileHandle via user gesture
+     */
+    async requestZipPermission() {
+      if (localZipHandle && typeof localZipHandle.requestPermission === 'function') {
+        try {
+          const perm = await localZipHandle.requestPermission({ mode: 'read' });
+          if (perm === 'granted') {
+            localZipFile = await localZipHandle.getFile();
+            localDirectoryStatus = 'connected';
+            lastHandleRefreshTime = Date.now();
+            const stats = await parseAndIndexZipFile(localZipFile);
+            return { success: true, stats };
+          }
+        } catch (e) {
+          console.warn('requestPermission ZIP handle:', e);
+        }
+      }
+      return { success: false };
     },
 
     /**

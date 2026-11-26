@@ -17,7 +17,7 @@
   <link rel="icon" type="image/png" href="./icon.png">
   <link rel="apple-touch-icon" href="./icon.png">
 
-  <link rel="stylesheet" href="./css/app.css?v=2.6">
+  <link rel="stylesheet" href="./css/app.css?v=2.7">
 </head>
 <body>
 
@@ -326,6 +326,20 @@
 
     <!-- Tab 1: Books (Default active view like Calibre Content Server & Desktop) -->
     <section id="section-books" class="tab-section active">
+      <!-- Calibre ZIP Standby / Reconnect Banner -->
+      <div id="zip-standby-banner" class="zip-standby-banner" hidden>
+        <div class="zip-standby-info">
+          <span class="zip-standby-icon">📦</span>
+          <div class="zip-standby-text">
+            <strong id="zip-standby-title">Bibliothèque ZIP en attente d'activation</strong>
+            <span id="zip-standby-desc">Cliquez pour activer les jaquettes et la lecture de vos livres EPUB.</span>
+          </div>
+        </div>
+        <button type="button" id="btn-reactivate-zip" class="btn btn-primary btn-sm btn-reactivate-zip" onclick="CalibreApp.reconnectZipArchive()">
+          ⚡ Activer les jaquettes
+        </button>
+      </div>
+
       <!-- Grid & List container -->
       <div id="books-container" class="view-mode-grid"></div>
 
@@ -811,9 +825,9 @@
   <script src="./lib/epub.min.js"></script>
 
   <!-- Application Modules -->
-  <script src="./js/storage.js?v=2.6"></script>
-  <script src="./js/calibre-db.js?v=2.6"></script>
-  <script src="./js/reader-epub.js?v=2.6"></script>
-  <script src="./js/app.js?v=2.6"></script>
+  <script src="./js/storage.js?v=2.7"></script>
+  <script src="./js/calibre-db.js?v=2.7"></script>
+  <script src="./js/reader-epub.js?v=2.7"></script>
+  <script src="./js/app.js?v=2.7"></script>
 </body>
 </html>

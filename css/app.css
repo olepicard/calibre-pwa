@@ -2730,3 +2730,89 @@ details[open] > .tag-category-summary .tag-cat-arrow {
 .main-content {
   padding-bottom: calc(95px + var(--safe-bottom)) !important;
 }
+
+/* =====================================================================
+   Calibre ZIP Standby / Reconnect Banner
+   ===================================================================== */
+.zip-standby-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 14px 14px 14px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.18), rgba(245, 158, 11, 0.08));
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 8px;
+  color: var(--text, #f1f5f9);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  animation: fadeIn 0.25s ease-out;
+}
+
+.zip-standby-banner[hidden] {
+  display: none !important;
+}
+
+.zip-standby-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.zip-standby-icon {
+  font-size: 1.6rem;
+  flex-shrink: 0;
+}
+
+.zip-standby-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.zip-standby-text strong {
+  font-size: 0.95rem;
+  color: #fbbf24;
+}
+
+.zip-standby-text span {
+  font-size: 0.82rem;
+  color: var(--text-muted, #94a3b8);
+  white-space: normal;
+}
+
+.btn-reactivate-zip {
+  flex-shrink: 0;
+  background: #d97706 !important;
+  color: #ffffff !important;
+  border: none !important;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(217, 119, 6, 0.4);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.btn-reactivate-zip:hover, .btn-reactivate-zip:active {
+  background: #b45309 !important;
+  transform: scale(1.02);
+}
+
+@media (max-width: 600px) {
+  .zip-standby-banner {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: left;
+    gap: 10px;
+    margin: 8px 10px 12px 10px;
+    padding: 10px 12px;
+  }
+  .btn-reactivate-zip {
+    width: 100%;
+    text-align: center;
+    justify-content: center;
+  }
+}
